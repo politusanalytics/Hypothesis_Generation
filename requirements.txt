@@ -9,3 +9,4 @@ pandas
 tiktoken
 sqlalchemy
 clickhouse-connect
+graypy
