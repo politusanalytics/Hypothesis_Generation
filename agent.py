@@ -15,7 +15,7 @@ from agents.rewrite_nl_agent import RewriteNLAgent
 from logger import logger, log_db_fallback
 
 try:
-    from agents.domain_rules import (
+    from agents.prompts.domain_prompts import (
         get_domain_context_prompt,
         build_hypothesis_synthesis_prompt,
         MARKETING_CONCEPT_DEFINITIONS,
@@ -45,14 +45,12 @@ for key in ["OPENAI_API_KEY", "PINECONE_API_KEY", "OPENAI_MODEL_NAME"]:
         os.environ[key] = val
 
 
-SQL_AGENT_PREFIX = f"""
-Sen üst düzey bir Pazarlama Veri Analisti ve SQL Danışmanısın.
-Görevlerin:
-1. KÖK SEBEP ÖNCELİĞİ: 'Neden', 'ürün problemi', 'şikayet kaynağı' gibi sorularda 'emotions' sütununu tek başına KULLANMA. 'topics', 'topic_categories' ve 'products' sütunlarındaki gerçek operasyonel sebepleri bul.
-2. DEMOGRAFİK BİRLEŞTİRME (JOIN): Yaş veya cinsiyet sorulduğunda 'twitter_tweets' ile 'demo_brand_users' tablolarını 'author_id = id' üzerinden birleştir (JOIN). Botları hariç tutmak için 'is_org = 0' filtresi uygula.
-3. KAVRAMSAL KURALLAR:
-{get_domain_context_prompt()}
-"""
+from agents.prompts.query_prompts import SQL_AGENT_PREFIX
+from agents.prompts.synthesis_prompts import (
+    EXECUTIVE_SUMMARY_PROMPT,
+    COMPETING_HYPOTHESES_EVALUATION_PROMPT,
+    PREDICTIVE_INSIGHT_PROMPT,
+)
 
 
 # --- 2. SENTEZ MOTORU (SYNTHESIS ENGINE) ---
@@ -62,16 +60,7 @@ class SynthesisEngine:
         self.llm = llm_instance
 
     def synthesize_executive_summary(self, question: str, sql_evidence: str) -> str:
-        prompt = PromptTemplate.from_template(
-            "Sen kıdemli bir Pazarlama Direktörüsün (CMO).\n"
-            "Soru: {question}\n\n"
-            "Veritabanından Toplanan Kanıtlar:\n{evidence}\n\n"
-            "{domain_rules}\n\n"
-            "GÖREVİN:\n"
-            "1. Yalnızca duygulardan bahsetme; arka plandaki kök nedenleri (topics, products) ve demografik eğilimleri vurgula.\n"
-            "2. En fazla 3-4 cümlelik vurucu, profesyonel bir Yönetici Özeti (Final Insight) oluştur.\n"
-            "3. En sona yönetici için 1 adet somut stratejik aksiyon adımı ekle."
-        )
+        prompt = PromptTemplate.from_template(EXECUTIVE_SUMMARY_PROMPT)
         chain = prompt | self.llm
         return chain.invoke({
             "question": question,
@@ -84,23 +73,7 @@ class SynthesisEngine:
         H0, H1 ve H2 hipotezlerini toplanan SQL verisi karşısında eşzamanlı yarıştırır.
         Varsayımsal konuşmaz; verideki reel sayıları kanıt göstererek karne üretir.
         """
-        prompt = PromptTemplate.from_template(
-            "Sen Baş Ekonometrist ve Kıdemli Pazarlama Direktörüsün (CMO).\n\n"
-            "YARIŞAN HİPOTEZLER:\n"
-            "- H0 (Sıfır Hipotezi): {h0}\n"
-            "- H1 (Birincil Hipotez): {h1}\n"
-            "- H2 (Rakip Hipotez): {h2}\n\n"
-            "VERİTABANINDAN TOPLANAN GERÇEK KANITLAR:\n{evidence}\n\n"
-            "PAZARLAMA KURALLARI:\n{domain_rules}\n\n"
-            "GÖREVİN:\n"
-            "1. KESİNLİKLE VARSAYIMSAL ('Eğer yüksekse', 'varsayarsak', 'olabilir') KONUŞMA. "
-            "   SQL çıktısında hangi sayılar, hacimler veya sıfırlar varsa doğrudan bu reel rakamları referans ver.\n"
-            "2. KARŞILAŞTIRMALI HİPOTEZ KARNESİ (Markdown Tablosu formatında üret):\n"
-            "   | Hipotez | Açıklama | Karar ([KABUL] / [KISMEN] / [REDDEDİLDİ]) | Destek Skoru (%) | Verideki Somut Kanıt (Sayılar/Metrikler) |\n"
-            "3. KAZANAN HİPOTEZ VE DERİN ANALİZ: Kazanan hipotezi ilan et; funnel daralmasını ve verideki sayısal çöküşü pazarlama mantığıyla açıkla.\n"
-            "4. YÖNETİCİ EYLEM PLANI: 2 maddelik net ve somut aksiyon adımı öner.\n\n"
-            "Yanıtını profesyonel, net ve Türkçe olarak sun."
-        )
+        prompt = PromptTemplate.from_template(COMPETING_HYPOTHESES_EVALUATION_PROMPT)
         chain = prompt | self.llm
         return chain.invoke({
             "h0": hypotheses.get("H0", "Sıfır hipotezi"),
@@ -116,15 +89,7 @@ class SynthesisEngine:
         return response.content.strip()
 
     def synthesize_predictive_insight(self, topic: str, time_series_evidence: str) -> str:
-        prompt = PromptTemplate.from_template(
-            "Sen bir Tahminleme ve Büyüme Stratejistisin.\n"
-            "Konu / Hedef: {topic}\n\n"
-            "Dönemsel Zaman Serisi Verileri:\n{evidence}\n\n"
-            "GÖREVİN:\n"
-            "1. Geçmiş trendlerin yönünü açıkla.\n"
-            "2. Gelecek dönem için risk ve fırsat projeksiyonu yap.\n"
-            "3. Olası riski bertaraf etmek için 2 maddelik proaktif strateji öner."
-        )
+        prompt = PromptTemplate.from_template(PREDICTIVE_INSIGHT_PROMPT)
         chain = prompt | self.llm
         return chain.invoke({
             "topic": topic,

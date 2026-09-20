@@ -6,6 +6,15 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 import streamlit as st
 
+from agents.prompts.rewrite_prompts import (
+    CONTEXTUALIZE_QUERY_PROMPT,
+    ASSESS_CLARIFICATION_NEED_PROMPT,
+    MACRO_QUESTION_PROMPT,
+    DECOMPOSE_QUESTION_PROMPT,
+    COMPETING_HYPOTHESES_PROMPT,
+    PREDICTIVE_TRENDS_PROMPT,
+)
+
 
 class RewriteNLAgent:
     """
@@ -46,16 +55,7 @@ class RewriteNLAgent:
         for item in chat_history[-3:]:
             history_text += f"Kullanıcı: {item.get('user', '')}\nAsistan Bulgusu: {item.get('assistant_summary', '')}\n---\n"
 
-        context_prompt = PromptTemplate.from_template(
-            "Sen bir Konuşma Bağlamı ve Takip Sorusu Çözümleyicisisin.\n\n"
-            "ÖNCEKİ KONUŞMA GEÇMİŞİ:\n{history}\n\n"
-            "KULLANICININ YENİ SORUSU: \"{question}\"\n\n"
-            "GÖREVİN:\n"
-            "1. Kullanıcının sorusu önceki konuya atıfta bulunan bir takip sorusu mu? (Örn: 'Peki kadınlar arasında nasıl?', 'Bunun sebebi ne?', 'Son çeyrekte durum ne?').\n"
-            "2. Eğer takip sorusuysa, önceki konuşmada geçen konu, tüketici hunisi aşaması (Consideration, Purchase, Recommendation vb.) ve kısıtları koruyarak soruyu tam, bağımsız ve veritabanından veri çekebilecek tek bir açık soruya dönüştür.\n"
-            "3. Eğer kullanıcı önceki konuyu tamamen bırakıp yeni ve bağımsız bir soru soruyorsa, soruyu hiç değiştirmeden aynen bırak.\n\n"
-            "SADECE netleştirilmiş tek bir soru cümlesi yaz. Başka hiçbir açıklama ekleme."
-        )
+        context_prompt = PromptTemplate.from_template(CONTEXTUALIZE_QUERY_PROMPT)
 
         resolved_q = (context_prompt | self.llm).invoke({
             "history": history_text.strip(),
@@ -65,27 +65,7 @@ class RewriteNLAgent:
         return resolved_q if resolved_q else current_question
 
     def assess_clarification_need(self, question: str, schema: str) -> Dict[str, Any]:
-        prompt = PromptTemplate.from_template(
-            "Sen bir Veri Analitiği Niyet Belirleme Uzmanısın.\n"
-            "Veritabanı Şeması:\n{schema}\n\n"
-            "Kullanıcı Sorusu: \"{question}\"\n\n"
-            "GÖREVİN:\n"
-            "Sorunun doğrudan hedeflenebilir bir odağı olup olmadığını değerlendir.\n"
-            "- Net bir metrik, aşama veya demografi varsa netleştirme GEREKMEZ (needs_clarification: false).\n"
-            "- Soru çok genel veya muğlaksa netleştirme GEREKİR (needs_clarification: true).\n\n"
-            "YALNIZCA AŞAĞIDAKİ JSON FORMATINDA YANIT VER:\n"
-            "{{\n"
-            '  "needs_clarification": true,\n'
-            '  "clarification_message": "Analizi daha isabetli hale getirmek için hangi ürün veya odak alanına yoğunlaşmak istersiniz?",\n'
-            '  "options": [\n'
-            '    {{"label": "☕ Kahve Makineleri", "context": "Kahve Makinesi ve Türk Kahvesi ürünlerine odaklan"}},\n'
-            '    {{"label": "🧹 Elektrik Süpürgeleri", "context": "Elektrik Süpürgesi kategorisine odaklan"}},\n'
-            '    {{"label": "📦 Servis & Teslimat Süreçleri", "context": "Satış sonrası servis ve teslimat şikayetlerine odaklan"}},\n'
-            '    {{"label": "🌐 Tüm Portföyü Kapsa", "context": "Tüm ürün grupları genelinde analiz yap"}}\n'
-            '  ]\n'
-            "}}\n"
-            "Soru zaten netse 'needs_clarification': false ve 'options': [] döndür."
-        )
+        prompt = PromptTemplate.from_template(ASSESS_CLARIFICATION_NEED_PROMPT)
 
         resp = (prompt | self.llm).invoke({"question": question, "schema": schema}).content.strip()
         if "```json" in resp:
@@ -99,21 +79,11 @@ class RewriteNLAgent:
             return {"needs_clarification": False, "options": []}
 
     def generate_macro_question(self, database_summary_info: str) -> str:
-        hl_prompt = PromptTemplate.from_template(
-            "Sen uzman bir pazarlama direktörüsün. Veritabanı özeti:\n{info}\n\n"
-            "Tüketici yolculuğundaki tıkanıklıkları sorgulayan tek bir stratejik soru üret. Sadece soruyu yaz."
-        )
+        hl_prompt = PromptTemplate.from_template(MACRO_QUESTION_PROMPT)
         return (hl_prompt | self.llm).invoke({"info": database_summary_info}).content.strip()
 
     def decompose_question(self, macro_question: str, schema: str) -> Tuple[str, List[str]]:
-        ll_prompt = PromptTemplate.from_template(
-            "Sen kıdemli bir veri analistisin. Veritabanı şeması:\n{schema}\n\n"
-            "Soru: {question}\n\n"
-            "GÖREVİN: Bu soruyu çözecek 2 net alt soru üret.\n"
-            "1. Kök nedenlerde mikro 'topic_name' yerine 'topic_categories' veya 'products' grupla.\n"
-            "2. Demografi için 'twitter_tweets.author_id = demo_brand_users.id' JOIN şartı ve 'is_org = 0' filtresi uygula.\n"
-            "Soruların başına tire (-) koy."
-        )
+        ll_prompt = PromptTemplate.from_template(DECOMPOSE_QUESTION_PROMPT)
         raw_text = (ll_prompt | self.llm).invoke({"question": macro_question, "schema": schema}).content
         sub_questions = [
             line.lstrip("-* ").strip()
@@ -123,21 +93,7 @@ class RewriteNLAgent:
         return raw_text, sub_questions
 
     def formulate_competing_hypotheses(self, topic: str, schema: str) -> Tuple[Dict[str, str], List[str]]:
-        json_prompt = PromptTemplate.from_template(
-            "Sen kıdemli bir ekonometrist ve pazarlama veri bilimcisisin.\n"
-            "VERİTABANI ŞEMASI:\n{schema}\n\n"
-            "Kullanıcının Test Etmek İstediği Gözlem: {topic}\n\n"
-            "YALNIZCA AŞAĞIDAKİ GEÇERLİ JSON FORMATINDA YANIT VER:\n"
-            "{{\n"
-            '  "H0": "Consideration aşamasındaki düşüş genel pazar hacmi daralmasından kaynaklanmaktadır; markaya özel bir funnel daralması yoktur.",\n'
-            '  "H1": "Consideration hacmindeki çöküş, pazarlama hunisinin tepe noktasının tıkandığını ve yeni tüketici akışının kesildiğini gösterir.",\n'
-            '  "H2": "Tüketiciler değerlendirme aşamasını atlayıp doğrudan satın almaya geçmekte veya rakip markalara yönelmektedir.",\n'
-            '  "test_questions": [\n'
-            '    "2025 ve 2026 yıllarında consumer_journey aşamalarının toplam tweet sayılarını getir.",\n'
-            '    "2026 yılında en çok bahsedilen ilk 5 topic_categories konusunu ve tweet sayılarını listele."\n'
-            '  ]\n'
-            "}}"
-        )
+        json_prompt = PromptTemplate.from_template(COMPETING_HYPOTHESES_PROMPT)
         raw_resp = (json_prompt | self.llm).invoke({"topic": topic, "schema": schema}).content.strip()
         if "```json" in raw_resp:
             raw_resp = raw_resp.split("```json")[1].split("```")[0].strip()
@@ -172,11 +128,7 @@ class RewriteNLAgent:
         return f"H0: {hyp_dict.get('H0')}\nH1: {hyp_dict.get('H1')}\nH2: {hyp_dict.get('H2')}", sub_qs
 
     def decompose_predictive_trends(self, topic: str, schema: str) -> Tuple[str, List[str]]:
-        pred_prompt = PromptTemplate.from_template(
-            "Sen bir tahminleme veri bilimcisisin. Veritabanı şeması:\n{schema}\n\n"
-            "Tahmin Talebi: {question}\n\n"
-            "Geçmiş trendleri verecek 2 net SQL alt sorusu kurgula. Soruların başına tire (-) koy."
-        )
+        pred_prompt = PromptTemplate.from_template(PREDICTIVE_TRENDS_PROMPT)
         raw_text = (pred_prompt | self.llm).invoke({"question": topic, "schema": schema}).content
         sub_questions = [
             line.lstrip("-* ").strip()

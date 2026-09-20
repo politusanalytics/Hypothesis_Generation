@@ -1,11 +1,6 @@
 """
-Pazarlama Alan Bilgisi ve Kavramsal Sözlük Katmanı (Domain Rules & Business Logic Layer).
-Botun SQL çıktılarını mekanik olarak değil; pazarlama hunisi, nedensellik ve marka sağlığı
-kavramlarıyla stratejik bir analist gibi yorumlamasını sağlar.
+Pazarlama Alan Bilgisi ve Kavramsal Sözlük Promptları (Domain Rules & Business Logic Layer).
 """
-
-from typing import Dict, Any
-
 
 # --- 1. KAVRAMSAL SÖZLÜK (CONCEPTUALIZATION DICTIONARY) ---
 MARKETING_CONCEPT_DEFINITIONS = """
@@ -20,7 +15,6 @@ MARKETING_CONCEPT_DEFINITIONS = """
    - Reason to Believe (İkna Edici Nedenler): Tüketicinin markaya güvenme dayanaklarıdır.
    - Demografik Kırılım: Yaş ve cinsiyet gruplarının farklı aşamalarda gösterdiği ayrışmalardır (Örn: 40+ yaşta müşteri hizmetleri kaynaklı şikayet yoğunlaşması).
 """
-
 
 # --- 2. STRATEJİK YORUMLAMA KURALLARI (HEURISTIC RULES) ---
 BUSINESS_HEURISTIC_RULES = """
@@ -40,8 +34,6 @@ Her hipotez veya içgörü sonucunda iddiayı şu 3 seviyeden biriyle etiketle:
 - [Desteklenmeyen / Unsupported]: Veri setinde doğrudan sütunu olmayan kavramlarla yapılan aşırı yorumlar (Örn: Elde tekrar eden alım veya sadakat tablosu yokken "Sadık müşteriler sayesinde ayakta duruyor" demek).
 """
 
-
-# --- 3. PROMPT ENTEGRASYON ŞABLONLARI ---
 
 def get_domain_context_prompt() -> str:
     """Ajanın sentez ve doğrulama promptlarına eklenecek kurumsal alan bilgisi metni."""
