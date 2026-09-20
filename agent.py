@@ -127,8 +127,9 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
         ch_db = get_secret("CLICKHOUSE_DB", "default")
         
         auth = f"{ch_user}:{ch_pass}@" if (ch_user or ch_pass) else ""
-        ch_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
-        sanitized_target = f"clickhouse+http://{ch_host}:{ch_port}/{ch_db}"
+        # clickhouse-connect official SQLAlchemy dialect is clickhousedb://
+        ch_uri = f"clickhousedb://{auth}{ch_host}:{ch_port}/{ch_db}"
+        sanitized_target = f"clickhousedb://{ch_host}:{ch_port}/{ch_db}"
         
         try:
             db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
@@ -139,6 +140,18 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
             )
             return db, ch_uri, "clickhouse"
         except Exception as e:
+            # Fallback attempt with legacy clickhouse+http if clickhouse-sqlalchemy is present
+            try:
+                legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
+                db = SQLDatabase.from_uri(legacy_uri, include_tables=CLICKHOUSE_CORE_TABLES)
+                db.get_table_info()
+                logger.info(
+                    "Connected to ClickHouse via clickhouse+http successfully.",
+                    extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host}
+                )
+                return db, legacy_uri, "clickhouse"
+            except Exception:
+                pass
             log_db_fallback(target_db=sanitized_target, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
 
     # SQLite Varsayılan Veritabanı
