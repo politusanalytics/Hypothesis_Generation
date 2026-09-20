@@ -18,6 +18,7 @@ from agents.sql_compiler import (
     quote_ident,
     _lit,
     _contains_lit,
+    _format_array_lit,
     _compile_join,
     _FILTER_OP_TO_SQL,
     _AGG_OPS,
@@ -53,10 +54,10 @@ BEKLENEN JSON ÇIKTI FORMATI:
   ],
   "columns": ["<sutun1>", "<sutun2>"],
   "aggregates": [
-    {{"op": "count" | "count_distinct" | "sum" | "avg" | "min" | "max", "column": "<sutun_adi>", "as": "<takma_ad>"}}
+    {{"op": "count" | "count_distinct" | "sum" | "avg" | "min" | "max" | "group_array", "column": "<sutun_adi>", "as": "<takma_ad>"}}
   ],
   "filters": [
-    {{"column": "<tablo_veya_sutun_adi>", "op": "EQ" | "NEQ" | "GT" | "GTE" | "LT" | "LTE" | "LIKE" | "ILIKE" | "IN" | "NOT_IN" | "BETWEEN" | "IS_NULL" | "IS_NOT_NULL", "value": <deger>}}
+    {{"column": "<tablo_veya_sutun_adi>", "op": "EQ" | "NEQ" | "GT" | "GTE" | "LT" | "LTE" | "LIKE" | "ILIKE" | "IN" | "NOT_IN" | "BETWEEN" | "HAS" | "HAS_ANY" | "HAS_ALL" | "IS_NULL" | "IS_NOT_NULL", "value": <deger>}}
   ],
   "group_by": ["<sutun1>", "<sutun2>"],
   "order_by": [
@@ -98,6 +99,7 @@ class QueryAgent:
         self,
         db_uri: str = "sqlite:///insight_generation_bot.db",
         model_name: str = "gpt-4o",
+        dialect: str = "sqlite",
         api_key: Optional[str] = None,
         llm: Optional[Any] = None,
         db: Optional[Any] = None,
@@ -105,6 +107,7 @@ class QueryAgent:
     ):
         self.db_uri = db_uri
         self.model_name = model_name
+        self.dialect = dialect
         self.api_key = api_key
         self._db = db
         self._llm = llm
@@ -160,10 +163,11 @@ class QueryAgent:
             logger.error(f"LLM çıktısı JSON olarak ayrıştırılamadı: {raw_text}")
             raise ValueError(f"Geçersiz JSON formatı: {e}") from e
 
-    def execute_nl_query(self, question: str) -> dict[str, Any]:
+    def execute_nl_query(self, question: str, dialect: Optional[str] = None) -> dict[str, Any]:
         """Doğal dil sorusunu JSON ve SQL derleme adımlarından geçirip veritabanında çalıştırır."""
+        active_dialect = dialect or self.dialect
         query_json = self.generate_query_json(question)
-        sql = compile_json_to_sql(query_json)
+        sql = compile_json_to_sql(query_json, dialect=active_dialect)
         result = self.db.run(sql)
         return {
             "question": question,
@@ -173,6 +177,6 @@ class QueryAgent:
         }
 
 
-def get_query_agent(db_uri: str = "sqlite:///insight_generation_bot.db", model_name: str = "gpt-4o") -> QueryAgent:
+def get_query_agent(db_uri: str = "sqlite:///insight_generation_bot.db", model_name: str = "gpt-4o", dialect: str = "sqlite") -> QueryAgent:
     """Kolay erişim için fabrika fonksiyonu."""
-    return QueryAgent(db_uri=db_uri, model_name=model_name)
+    return QueryAgent(db_uri=db_uri, model_name=model_name, dialect=dialect)
