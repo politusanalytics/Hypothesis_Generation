@@ -125,11 +125,21 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
         ch_user = get_secret("CLICKHOUSE_USERNAME", "default")
         ch_pass = get_secret("CLICKHOUSE_PASSWORD", "")
         ch_db = get_secret("CLICKHOUSE_DB", "default")
+        ch_secure = get_secret("CLICKHOUSE_SECURE", "")
+        ch_verify = get_secret("CLICKHOUSE_VERIFY", "")
         
         auth = f"{ch_user}:{ch_pass}@" if (ch_user or ch_pass) else ""
+
+        params = []
+        if ch_secure.lower() in ("true", "1", "yes") or str(ch_port) == "443":
+            params.append("secure=True")
+        if ch_verify.lower() in ("false", "0", "no"):
+            params.append("verify=False")
+        query_str = f"?{'&'.join(params)}" if params else ""
+
         # clickhouse-connect official SQLAlchemy dialect is clickhousedb://
-        ch_uri = f"clickhousedb://{auth}{ch_host}:{ch_port}/{ch_db}"
-        sanitized_target = f"clickhousedb://{ch_host}:{ch_port}/{ch_db}"
+        ch_uri = f"clickhousedb://{auth}{ch_host}:{ch_port}/{ch_db}{query_str}"
+        sanitized_target = f"clickhousedb://{ch_host}:{ch_port}/{ch_db}{query_str}"
         
         try:
             db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
@@ -142,7 +152,7 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
         except Exception as e:
             # Fallback attempt with legacy clickhouse+http if clickhouse-sqlalchemy is present
             try:
-                legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
+                legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}{query_str}"
                 db = SQLDatabase.from_uri(legacy_uri, include_tables=CLICKHOUSE_CORE_TABLES)
                 db.get_table_info()
                 logger.info(
