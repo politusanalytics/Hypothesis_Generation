@@ -239,6 +239,38 @@ class TestQueryCompiler(unittest.TestCase):
         self.assertEqual(out["result"], "[('18-29', 5420)]")
         self.assertIn('SELECT "age_group", count("user_id") AS "cnt" FROM "demographics"', out["sql"])
 
+    def test_query_agent_compilation_failure_logged(self):
+        mock_db = MagicMock()
+        # Invalid JSON missing "table" field
+        json_response = """```json
+{
+  "columns": ["age_group"]
+}
+```"""
+        mock_llm = RunnableLambda(lambda x: AIMessage(content=json_response))
+        agent = QueryAgent(llm=mock_llm, db=mock_db, schema="mock_schema", dialect="sqlite")
+
+        with self.assertRaises(ValueError) as ctx:
+            agent.execute_nl_query("Hatalı sorgu")
+        self.assertIn("table", str(ctx.exception).lower())
+
+    def test_query_agent_db_execution_failure_logged(self):
+        mock_db = MagicMock()
+        mock_db.run.side_effect = RuntimeError("no such column: fake_col")
+
+        json_response = """```json
+{
+  "table": "demographics",
+  "columns": ["fake_col"]
+}
+```"""
+        mock_llm = RunnableLambda(lambda x: AIMessage(content=json_response))
+        agent = QueryAgent(llm=mock_llm, db=mock_db, schema="mock_schema", dialect="sqlite")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            agent.execute_nl_query("Varolmayan sütun sorgusu")
+        self.assertIn("fake_col", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

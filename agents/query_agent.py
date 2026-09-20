@@ -45,6 +45,18 @@ _QUERY_GENERATOR_SYSTEM_PROMPT = QUERY_GENERATOR_SYSTEM_PROMPT
 
 # --- 3. SORGU PLANLAMA AJANI SINIFI (Lazy-Loaded LLM & DB) ---
 
+import time
+
+try:
+    from logger import log_query
+except ImportError:
+    try:
+        from ..logger import log_query
+    except Exception:
+        def log_query(*args, **kwargs):
+            pass
+
+
 class QueryAgent:
     """
     Doğal dil sorularını yapılandırılmış JSON formatına çeviren ve deterministik SQL üreten sorgu ajanı.
@@ -122,16 +134,63 @@ class QueryAgent:
 
     def execute_nl_query(self, question: str, dialect: Optional[str] = None) -> dict[str, Any]:
         """Doğal dil sorusunu JSON ve SQL derleme adımlarından geçirip veritabanında çalıştırır."""
+        start_time = time.perf_counter()
         active_dialect = dialect or self.dialect
-        query_json = self.generate_query_json(question)
-        sql = compile_json_to_sql(query_json, dialect=active_dialect)
-        result = self.db.run(sql)
-        return {
-            "question": question,
-            "json_query": query_json,
-            "sql": sql,
-            "result": result
-        }
+        query_json = {}
+        sql = ""
+
+        try:
+            query_json = self.generate_query_json(question)
+        except Exception as e:
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            log_query(
+                question=question,
+                json_query={},
+                sql="",
+                duration_ms=duration_ms,
+                error=f"JSON Generation Failed: {e}"
+            )
+            raise
+
+        try:
+            sql = compile_json_to_sql(query_json, dialect=active_dialect)
+        except Exception as e:
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            log_query(
+                question=question,
+                json_query=query_json,
+                sql="",
+                duration_ms=duration_ms,
+                error=f"SQL Compilation Failed: {e}"
+            )
+            raise
+
+        try:
+            result = self.db.run(sql)
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            log_query(
+                question=question,
+                json_query=query_json,
+                sql=sql,
+                result=result,
+                duration_ms=duration_ms
+            )
+            return {
+                "question": question,
+                "json_query": query_json,
+                "sql": sql,
+                "result": result
+            }
+        except Exception as e:
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            log_query(
+                question=question,
+                json_query=query_json,
+                sql=sql,
+                duration_ms=duration_ms,
+                error=f"Database Execution Failed: {e}"
+            )
+            raise
 
 
 def get_query_agent(db_uri: str = "sqlite:///insight_generation_bot.db", model_name: str = "gpt-4o", dialect: str = "sqlite") -> QueryAgent:

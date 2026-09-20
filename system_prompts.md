@@ -35,7 +35,7 @@ Encapsulates business and marketing logic to ensure empirical interpretation of 
 ### B. Query Planning & SQL Prompts (`query_prompts.py`)
 Guides the translation of natural language questions into structured SPJQ (Select-Project-Join-Query) JSON objects.
 
-* **`QUERY_GENERATOR_SYSTEM_PROMPT`**: System prompt providing the SPJQ JSON grammar (`table`, `joins`, `columns`, `aggregates`, `filters`, `group_by`, `order_by`, `limit`) and noise-reduction rules (aggregating `topic_categories`/`products` instead of raw micro-text).
+* **`QUERY_GENERATOR_SYSTEM_PROMPT`**: System prompt providing the SPJQ JSON grammar (`table`, `joins`, `columns`, `aggregates`, `filters`, `group_by`, `order_by`, `limit`) and noise-reduction rules for aggregating predictions and topics.
 * **`SQL_AGENT_PREFIX`**: System prefix for LangChain's interactive SQL agent (`create_sql_agent`), enforcing operational root cause discovery and demographic JOINs (`is_org = 0`).
 
 ---
@@ -65,9 +65,42 @@ Transforms raw SQL execution results into executive-level briefings and comparat
 
 ---
 
-## 2. Necessary Additions & Upgrades
+## 2. Necessary Changes & Upgrades
 
-### 1. ClickHouse Schema Compatibility & Semantic Mapping
+### 1. Critical Issues: Legacy Schema & Column Hallucination
+
+> [!CAUTION]
+> **High Priority Fix Required**: The prompt templates and fallback routines contain hardcoded references to legacy SQLite demo columns (`topic_categories`, `products`) and demo tables (`twitter_tweets`, `demo_brand_users`). These legacy references instruct the LLM to generate invalid queries that cause ClickHouse execution exceptions (`DB::Exception: Unknown expression identifier topic_categories` and `Table default.twitter_tweets doesn't exist`).
+
+#### Exact Locations in Codebase:
+1. **`agents/prompts/query_prompts.py`**:
+   - **Lines 40–43 (`QUERY_GENERATOR_SYSTEM_PROMPT`)**: Instructs grouping by non-existent columns `'topic_categories'` or `'products'`.
+   - **Lines 45–52 (`QUERY_GENERATOR_SYSTEM_PROMPT`)**: Instructs table `'twitter_tweets'` and joins on `'demo_brand_users'` with `'twitter_tweets.author_id = demo_brand_users.id'`.
+   - **Lines 53–55 (`QUERY_GENERATOR_SYSTEM_PROMPT`)**: Instructs `LIKE` filtering on `'twitter_tweets.consumer_journey'` instead of ClickHouse task-based array filtering.
+   - **Lines 66–67 (`SQL_AGENT_PREFIX`)**: References `'topics', 'topic_categories', 'products'` and `'twitter_tweets'` JOIN `'demo_brand_users'`.
+2. **`agents/prompts/rewrite_prompts.py`**:
+   - **Lines 68–69 (`DECOMPOSE_QUESTION_PROMPT`)**: Instructs sub-questions to group by `'topic_categories'` or `'products'` and join `'twitter_tweets'`.
+   - **Line 89 (`COMPETING_HYPOTHESES_PROMPT`)**: Few-shot example test question includes `"topic_categories"`.
+3. **`agents/rewrite_nl_agent.py`**:
+   - **Line 121 (`formulate_competing_hypotheses`)**: Fallback question list uses `"topic_categories"`.
+4. **`app.py`**:
+   - **Line 251 (`MOD 1: Otonom İçgörü`)**: Passes obsolete schema string `"Tablolar: twitter_tweets, demo_brand_users, demo_brand_predictions"` to `generate_macro_question`.
+5. **`tests/`**:
+   - `tests/test_rewrite_nl_agent.py` (Lines 44, 65): Assertions expecting `"topic_categories"`.
+   - `tests/test_query_compiler.py` (Lines 105–117): Joins referencing `twitter_tweets` and `demo_brand_users`.
+
+#### ClickHouse Schema Alignment Mapping:
+| Legacy Prompt Pattern | Target ClickHouse Schema Pattern |
+| :--- | :--- |
+| `group_by: ["topic_categories"]` | Filter: `task_name = 'topic_monthly'`, column: `category_value` |
+| `group_by: ["products"]` | Filter: `task_name = 'brand'` / `brand_sector`, column: `category_value` |
+| `twitter_tweets.consumer_journey LIKE '...'` | Filter: `task_name = 'consumer_journey'` AND `has(category_value, '...')` |
+| `table: 'twitter_tweets'` | `table: 'tweet_predictions'` or `table: 'tweets'` |
+| `joins: [{'table': 'demo_brand_users'}]` | `joins: [{'table': 'users', 'on': {'left': 'tweets.author_id', 'right': 'users.id'}}]` |
+
+---
+
+### 2. ClickHouse Schema Compatibility & Semantic Mapping
 To ensure accurate query planning against ClickHouse, the system prompts require explicit schema context and querying semantics:
 
 * **Table Purpose Definitions**:
@@ -86,14 +119,14 @@ To ensure accurate query planning against ClickHouse, the system prompts require
 
 ---
 
-### 2. Few-Shot Example Integration
+### 3. Few-Shot Example Integration
 Adding concrete input-output examples directly inside the prompts ensures consistent formatting and prevents syntax hallucinations:
 
 * **`QUERY_GENERATOR_SYSTEM_PROMPT`**:
-  * Examples covering grouped aggregations with ordering and limits (e.g., top complaint categories in a specific timeframe).
-  * Examples demonstrating multi-table demographic JOINs with bot exclusion.
-  * Examples showing array containment filtering on `consumer_journey` or `topics`.
+  * Examples covering grouped aggregations with ordering and limits (e.g., top complaint categories in a specific timeframe using `task_name = 'consumer_journey'`).
+  * Examples demonstrating multi-table demographic JOINs between `tweets`, `tweet_predictions`, and `users` with `is_org = 0` bot exclusion.
+  * Examples showing array containment filtering on `consumer_journey` or `topics` with `has()`.
 * **`COMPETING_HYPOTHESES_PROMPT`**:
-  * Reference examples mapping ambiguous business observations into distinct $H_0, H_1, H_2$ formulations and valid SQL verification questions.
+  * Reference examples mapping ambiguous business observations into distinct $H_0, H_1, H_2$ formulations and valid ClickHouse-compatible verification questions.
 * **`ASSESS_CLARIFICATION_NEED_PROMPT`**:
   * Examples distinguishing between specific actionable queries (no clarification needed) and broad/vague queries (generating category/product option cards).
