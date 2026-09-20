@@ -8,3 +8,4 @@ plotly
 pandas
 tiktoken
 sqlalchemy
+clickhouse-connect
