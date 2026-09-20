@@ -10,8 +10,9 @@ from langchain_core.tools import Tool
 from langchain_core.prompts import PromptTemplate
 import streamlit as st
 
-from agents.query_agent import QueryAgent
+from agents.query_agent import QueryAgent, CLICKHOUSE_CORE_TABLES
 from agents.rewrite_nl_agent import RewriteNLAgent
+from logger import logger, log_db_fallback
 
 try:
     from agents.domain_rules import (
@@ -26,16 +27,23 @@ except ImportError:
     def build_hypothesis_synthesis_prompt(h: str, e: str) -> str:
         return f"Hipotez: {h}\nKanıtlar: {e}\nLütfen hipotezi doğrula ve açıkla."
 
-logger = logging.getLogger(__name__)
 
-# --- API ANAHTARLARI ---
-try:
-    if hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets:
-        os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-    if hasattr(st, "secrets") and "PINECONE_API_KEY" in st.secrets:
-        os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
-except Exception:
-    pass
+def get_secret(key: str, default: str = "") -> str:
+    """Streamlit secrets veya ortam değişkenlerinden güvenli değer okur."""
+    try:
+        if hasattr(st, "secrets") and key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+    return os.getenv(key, default)
+
+
+# --- 1. API ANAHTARLARI & ORTAM DEĞİŞKENLERİ ---
+for key in ["OPENAI_API_KEY", "PINECONE_API_KEY", "OPENAI_MODEL_NAME"]:
+    val = get_secret(key)
+    if val:
+        os.environ[key] = val
+
 
 SQL_AGENT_PREFIX = f"""
 Sen üst düzey bir Pazarlama Veri Analisti ve SQL Danışmanısın.
@@ -46,8 +54,8 @@ Görevlerin:
 {get_domain_context_prompt()}
 """
 
-# --- SENTEZ MOTORU ---
-# agent.py dosyasındaki SynthesisEngine sınıfını şu şekilde güncelleyin:
+
+# --- 2. SENTEZ MOTORU (SYNTHESIS ENGINE) ---
 
 class SynthesisEngine:
     def __init__(self, llm_instance: ChatOpenAI):
@@ -122,23 +130,73 @@ class SynthesisEngine:
             "topic": topic,
             "evidence": time_series_evidence
         }).content.strip()
-    
-# --- HİBRİT VE KADEMELİ MOTOR ---
+
+
+# --- 3. VERİTABANI BAĞLANTISI VE YEDEKLEME (CLICKHOUSE -> SQLITE FALLBACK) ---
+
+def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDatabase, str, str]:
+    """
+    ClickHouse veya özel veritabanı bağlantısını dener;
+    Ulaşılamazsa log_db_fallback çağırarak güvenle SQLite'a geçer.
+    Dönüş: (db_instance, db_uri, dialect)
+    """
+    if custom_uri:
+        dialect = "clickhouse" if "clickhouse" in custom_uri.lower() else "sqlite"
+        try:
+            if dialect == "clickhouse":
+                db = SQLDatabase.from_uri(custom_uri, include_tables=CLICKHOUSE_CORE_TABLES)
+            else:
+                db = SQLDatabase.from_uri(custom_uri)
+            db.get_table_info()
+            return db, custom_uri, dialect
+        except Exception as e:
+            log_db_fallback(target_db=custom_uri, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
+            sqlite_uri = "sqlite:///insight_generation_bot.db"
+            return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
+
+    ch_host = get_secret("CLICKHOUSE_HOST")
+    if ch_host:
+        ch_port = get_secret("CLICKHOUSE_PORT", "8123")
+        ch_user = get_secret("CLICKHOUSE_USERNAME", "default")
+        ch_pass = get_secret("CLICKHOUSE_PASSWORD", "")
+        ch_db = get_secret("CLICKHOUSE_DB", "default")
+        
+        auth = f"{ch_user}:{ch_pass}@" if (ch_user or ch_pass) else ""
+        ch_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
+        sanitized_target = f"clickhouse+http://{ch_host}:{ch_port}/{ch_db}"
+        
+        try:
+            db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
+            db.get_table_info()  # Şema derleme doğrulaması
+            logger.info(
+                "Connected to ClickHouse successfully.",
+                extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host}
+            )
+            return db, ch_uri, "clickhouse"
+        except Exception as e:
+            log_db_fallback(target_db=sanitized_target, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
+
+    # SQLite Varsayılan Veritabanı
+    sqlite_uri = "sqlite:///insight_generation_bot.db"
+    return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
+
+
+# --- 4. HİBRİT VE KADEMELİ MOTOR (2-TIER ROUTING) ---
+
 def get_hybrid_agent(
-    db_uri: str = "sqlite:///insight_generation_bot.db",
+    db_uri: Optional[str] = None,
     fast_model: str = "gpt-4o-mini",
     reasoning_model: str = "gpt-4o"
 ):
-    db = SQLDatabase.from_uri(db_uri)
+    # 1. SQL Bağlantısı (ClickHouse -> SQLite Yedekli & Loglu)
+    db, active_uri, dialect = get_database_connection(custom_uri=db_uri)
     
-    # 1. Kademe: SQL ve sorgu planlayıcı model
+    # 2. Kademe Modeller
     llm_fast = ChatOpenAI(model=fast_model, temperature=0)
-    
-    # 2. Kademe: Stratejik sentez ve hipotez doğrulama modeli
     llm_reasoning = ChatOpenAI(model=reasoning_model, temperature=0)
-    
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
+    # 3. RAG Bağlantısı
     index_name = "pazarlama-verileri" 
     extra_tools = []
     try:
@@ -150,9 +208,17 @@ def get_hybrid_agent(
             func=retriever.invoke
         )
         extra_tools.append(rag_tool)
+        logger.info(
+            "RAG tool integrated successfully.",
+            extra={"event_type": "rag_init", "status": "success", "index_name": index_name}
+        )
     except Exception as e:
-        logger.warning(f"RAG sistemine bağlanılamadı: {e}")
+        logger.warning(
+            f"RAG sistemine bağlanılamadı: {e}",
+            extra={"event_type": "rag_init", "status": "failed", "error": str(e)}
+        )
 
+    # 4. Hibrit Ajan (SQL + RAG)
     agent_executor = create_sql_agent(
         llm=llm_fast,
         db=db,
@@ -162,7 +228,8 @@ def get_hybrid_agent(
         verbose=False
     )
     
-    query_agent = QueryAgent(db_uri=db_uri, model_name=fast_model)
+    # 5. Alt Ajanlar & Sentez Motoru
+    query_agent = QueryAgent(db_uri=active_uri, model_name=fast_model, dialect=dialect, db=db)
     rewrite_agent = RewriteNLAgent(model_name=fast_model)
     synthesis_engine = SynthesisEngine(llm_reasoning)
     

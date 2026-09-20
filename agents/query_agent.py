@@ -26,6 +26,8 @@ from agents.sql_compiler import (
 
 logger = logging.getLogger(__name__)
 
+CLICKHOUSE_CORE_TABLES = ["tweet_predictions", "tweets", "users", "user_factors"]
+
 # --- 1. API ANAHTARLARI (Streamlit Secrets & Ortam Değişkenleri ile Uyumlu) ---
 try:
     if hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets:
@@ -116,7 +118,10 @@ class QueryAgent:
     @property
     def db(self) -> SQLDatabase:
         if self._db is None:
-            self._db = SQLDatabase.from_uri(self.db_uri)
+            if self.dialect == "clickhouse" or "clickhouse" in self.db_uri:
+                self._db = SQLDatabase.from_uri(self.db_uri, include_tables=CLICKHOUSE_CORE_TABLES)
+            else:
+                self._db = SQLDatabase.from_uri(self.db_uri)
         return self._db
 
     @property
