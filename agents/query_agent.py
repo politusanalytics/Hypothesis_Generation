@@ -46,6 +46,7 @@ _QUERY_GENERATOR_SYSTEM_PROMPT = QUERY_GENERATOR_SYSTEM_PROMPT
 # --- 3. SORGU PLANLAMA AJANI SINIFI (Lazy-Loaded LLM & DB) ---
 
 import time
+from agents.query_validation import validate_query_plan
 
 try:
     from logger import log_query
@@ -69,7 +70,9 @@ class QueryAgent:
         api_key: Optional[str] = None,
         llm: Optional[Any] = None,
         db: Optional[Any] = None,
-        schema: Optional[str] = None
+        schema: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        catalog: Optional[dict] = None
     ):
         self.db_uri = db_uri
         self.model_name = model_name
@@ -78,14 +81,17 @@ class QueryAgent:
         self._db = db
         self._llm = llm
         self._schema = schema
+        self.system_prompt = system_prompt or _QUERY_GENERATOR_SYSTEM_PROMPT
+        self.catalog = catalog if catalog is not None else getattr(db, "catalog", None)
+        if self.catalog is not None and not isinstance(self.catalog, dict):
+            self.catalog = None
 
     @property
     def db(self) -> SQLDatabase:
         if self._db is None:
-            if self.dialect == "clickhouse" or "clickhouse" in self.db_uri:
-                self._db = SQLDatabase.from_uri(self.db_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-            else:
-                self._db = SQLDatabase.from_uri(self.db_uri)
+            from agent import get_database_connection
+            self._db, _, self.dialect = get_database_connection(self.db_uri)
+            self.catalog = self._db.catalog
         return self._db
 
     @property
@@ -113,11 +119,11 @@ class QueryAgent:
     def generate_query_json(self, question: str) -> dict[str, Any]:
         """Kullanıcı sorusunu ilişkisel JSON sorgusuna çevirir."""
         prompt = ChatPromptTemplate.from_messages([
-            ("system", _QUERY_GENERATOR_SYSTEM_PROMPT),
+            ("system", self.system_prompt),
             ("user", "Bu soruyu yapılandırılmış JSON formatına çevir: {question}")
         ])
         chain = prompt | self.llm
-        response = chain.invoke({"schema": self.schema, "question": question})
+        response = chain.invoke({"schema": self.schema, "question": question, "dialect": self.dialect})
         raw_text = response.content.strip()
 
         # Markdown işaretlerini temizle
@@ -129,13 +135,15 @@ class QueryAgent:
             query_json = json.loads(raw_text)
             return query_json
         except json.JSONDecodeError as e:
-            logger.error(f"LLM çıktısı JSON olarak ayrıştırılamadı: {raw_text}")
+            logger.error("LLM çıktısı JSON olarak ayrıştırılamadı.")
             raise ValueError(f"Geçersiz JSON formatı: {e}") from e
 
     def execute_nl_query(self, question: str, dialect: Optional[str] = None) -> dict[str, Any]:
         """Doğal dil sorusunu JSON ve SQL derleme adımlarından geçirip veritabanında çalıştırır."""
         start_time = time.perf_counter()
         active_dialect = dialect or self.dialect
+        if active_dialect != self.dialect:
+            raise ValueError("Bağlı veritabanından farklı SQL lehçesi kullanılamaz.")
         query_json = {}
         sql = ""
 
@@ -153,6 +161,10 @@ class QueryAgent:
             raise
 
         try:
+            # Ensure lazy DB/catalog initialization precedes schema validation.
+            self.db
+            query_json = validate_query_plan(query_json, dialect=active_dialect,
+                                              catalog=self.catalog, default_limit=1000)
             sql = compile_json_to_sql(query_json, dialect=active_dialect)
         except Exception as e:
             duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -191,6 +203,22 @@ class QueryAgent:
                 error=f"Database Execution Failed: {e}"
             )
             raise
+
+
+    def execute_plan(self, plan):
+        """Execute a user-configured statistical plan through the same guardrails."""
+        self.db
+        plan = validate_query_plan(plan, dialect=self.dialect, catalog=self.catalog, default_limit=1000)
+        sql = compile_json_to_sql(plan, dialect=self.dialect)
+        start = time.perf_counter()
+        try:
+            result = self.db.run(sql)
+        except Exception as error:
+            log_query("structured_analysis", plan, sql, error=type(error).__name__)
+            raise
+        log_query("structured_analysis", plan, sql, result=result,
+                  duration_ms=(time.perf_counter() - start) * 1000)
+        return {"json_query": plan, "sql": sql, "result": result}
 
 
 def get_query_agent(db_uri: str = "sqlite:///insight_generation_bot.db", model_name: str = "gpt-4o", dialect: str = "sqlite") -> QueryAgent:

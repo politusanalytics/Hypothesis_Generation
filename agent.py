@@ -1,113 +1,68 @@
 import os
-import json
-import logging
-from typing import Optional, Dict, Any, List, Tuple
-from langchain_community.utilities.sql_database import SQLDatabase
-from langchain_community.agent_toolkits import create_sql_agent
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_pinecone import PineconeVectorStore
-from langchain_core.tools import Tool
+from pathlib import Path
+from urllib.parse import unquote
+
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 import streamlit as st
 
-from agents.query_agent import QueryAgent, CLICKHOUSE_CORE_TABLES
+from agents.query_agent import QueryAgent
 from agents.rewrite_nl_agent import RewriteNLAgent
-from logger import logger, log_db_fallback
-
-try:
-    from agents.prompts.domain_prompts import (
-        get_domain_context_prompt,
-        build_hypothesis_synthesis_prompt,
-        MARKETING_CONCEPT_DEFINITIONS,
-        BUSINESS_HEURISTIC_RULES,
-    )
-except ImportError:
-    def get_domain_context_prompt() -> str:
-        return "Pazarlama hunisinde Consideration düşüşü funnel daralmasını gösterir. Kök neden için topics/products sütunlarına odaklan."
-    def build_hypothesis_synthesis_prompt(h: str, e: str) -> str:
-        return f"Hipotez: {h}\nKanıtlar: {e}\nLütfen hipotezi doğrula ve açıkla."
+from database import SQLiteDatabase, connect_clickhouse
+from logger import logger
+from agents.prompts.domain_prompts import get_domain_context_prompt
+from agents.prompts.synthesis_prompts import EXECUTIVE_SUMMARY_PROMPT
 
 
 def get_secret(key: str, default: str = "") -> str:
-    """Streamlit secrets veya ortam değişkenlerinden güvenli değer okur."""
     try:
-        if hasattr(st, "secrets") and key in st.secrets:
+        if key in st.secrets:
             return str(st.secrets[key])
     except Exception:
         pass
     return os.getenv(key, default)
 
 
-# --- 1. API ANAHTARLARI & ORTAM DEĞİŞKENLERİ ---
-for key in ["OPENAI_API_KEY", "PINECONE_API_KEY", "OPENAI_MODEL_NAME"]:
-    val = get_secret(key)
-    if val:
-        os.environ[key] = val
-
-
-from agents.prompts.query_prompts import SQL_AGENT_PREFIX
-from agents.prompts.synthesis_prompts import (
-    EXECUTIVE_SUMMARY_PROMPT,
-    COMPETING_HYPOTHESES_EVALUATION_PROMPT,
-    PREDICTIVE_INSIGHT_PROMPT,
-)
-
-
-# --- 2. SENTEZ MOTORU (SYNTHESIS ENGINE) ---
-
 class SynthesisEngine:
-    def __init__(self, llm_instance: ChatOpenAI):
+    def __init__(self, llm_instance):
         self.llm = llm_instance
 
-    def synthesize_executive_summary(self, question: str, sql_evidence: str) -> str:
-        prompt = PromptTemplate.from_template(EXECUTIVE_SUMMARY_PROMPT)
-        chain = prompt | self.llm
-        return chain.invoke({
-            "question": question,
-            "evidence": sql_evidence,
+    def synthesize_executive_summary(self, question, sql_evidence):
+        return (PromptTemplate.from_template(EXECUTIVE_SUMMARY_PROMPT) | self.llm).invoke({
+            "question": question, "evidence": sql_evidence,
             "domain_rules": get_domain_context_prompt()
         }).content.strip()
 
-    def evaluate_competing_hypotheses(self, hypotheses: Dict[str, str], sql_evidence: str) -> str:
-        """
-        H0, H1 ve H2 hipotezlerini toplanan SQL verisi karşısında eşzamanlı yarıştırır.
-        Varsayımsal konuşmaz; verideki reel sayıları kanıt göstererek karne üretir.
-        """
-        prompt = PromptTemplate.from_template(COMPETING_HYPOTHESES_EVALUATION_PROMPT)
-        chain = prompt | self.llm
-        return chain.invoke({
-            "h0": hypotheses.get("H0", "Sıfır hipotezi"),
-            "h1": hypotheses.get("H1", "Birincil hipotez"),
-            "h2": hypotheses.get("H2", "Rakip hipotez"),
-            "evidence": sql_evidence,
-            "domain_rules": get_domain_context_prompt()
-        }).content.strip()
+    def evaluate_competing_hypotheses(self, hypotheses, statistical_result):
+        from statistical_analysis import hypothesis_report
+        if not isinstance(statistical_result, dict) or "p_value" not in statistical_result:
+            raise ValueError("Hipotez kararı hesaplanmış istatistiksel test sonucu gerektirir.")
+        return hypothesis_report(statistical_result)
 
-    def verify_hypothesis(self, hypothesis: str, sql_evidence: str) -> str:
-        prompt_text = build_hypothesis_synthesis_prompt(hypothesis, sql_evidence)
-        response = self.llm.invoke(prompt_text)
-        return response.content.strip()
+    def verify_hypothesis(self, hypothesis, statistical_result):
+        return self.evaluate_competing_hypotheses({"H1": hypothesis}, statistical_result)
 
-    def synthesize_predictive_insight(self, topic: str, time_series_evidence: str) -> str:
-        prompt = PromptTemplate.from_template(PREDICTIVE_INSIGHT_PROMPT)
-        chain = prompt | self.llm
-        return chain.invoke({
-            "topic": topic,
-            "evidence": time_series_evidence
-        }).content.strip()
+    def synthesize_predictive_insight(self, topic, forecast_result):
+        from forecasting import forecast_report
+        if not isinstance(forecast_result, dict) or "metrics" not in forecast_result:
+            raise ValueError("Projeksiyon hesaplanmış zaman serisi tahmini gerektirir.")
+        return forecast_report(forecast_result)
 
 
-# --- 3. VERİTABANI BAĞLANTISI VE YEDEKLEME (CLICKHOUSE -> SQLITE FALLBACK) ---
-
-def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDatabase, str, str]:
-    """
-    ClickHouse veya özel veritabanı bağlantısını dener;
-    Ulaşılamazsa log_db_fallback çağırarak güvenle SQLite'a geçer.
-    Dönüş: (db_instance, db_uri, dialect)
-    """
+def get_database_connection(custom_uri=None):
+    """Configured ClickHouse fails closed; SQLite is an explicit local profile."""
     if custom_uri:
-        dialect = "clickhouse" if "clickhouse" in custom_uri.lower() else "sqlite"
+        if not custom_uri.startswith("sqlite:///"):
+            raise ValueError("Özel URI yalnızca SQLite içindir; ClickHouse için CLICKHOUSE_* ayarlarını kullanın.")
+        path = unquote(custom_uri[len("sqlite:///"):])
+        db = SQLiteDatabase(path)
+        return db, custom_uri, "sqlite"
+    backend = get_secret("DATABASE_BACKEND", "auto").lower()
+    if backend not in {"auto", "clickhouse", "sqlite"}:
+        raise ValueError("DATABASE_BACKEND auto/clickhouse/sqlite olmalı.")
+    if backend == "clickhouse" or (backend == "auto" and get_secret("CLICKHOUSE_HOST")):
         try:
+<<<<<<< HEAD
             if dialect == "clickhouse":
                 db = SQLDatabase.from_uri(custom_uri, include_tables=CLICKHOUSE_CORE_TABLES)
             else:
@@ -167,59 +122,33 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
     # SQLite Varsayılan Veritabanı
     sqlite_uri = "sqlite:///insight_generation_bot.db"
     return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
+=======
+            db = connect_clickhouse(get_secret)
+            logger.info("ClickHouse connection established.", extra={"event_type": "database_connection"})
+            return db, "clickhouse", "clickhouse"
+        except Exception as error:
+            logger.error("ClickHouse connection failed.", extra={"error_type": type(error).__name__})
+            raise ValueError("ClickHouse bağlantısı kurulamadı; bağlantı ve tablo izinlerini kontrol edin.") from None
+    path = get_secret("SQLITE_DB_PATH", str(Path(__file__).parent / "insight_generation_bot.db"))
+    return SQLiteDatabase(path), "sqlite:///" + path, "sqlite"
+>>>>>>> 855fba7 (5. mod eklendi)
 
 
-# --- 4. HİBRİT VE KADEMELİ MOTOR (2-TIER ROUTING) ---
+class ValidatedExecutor:
+    """Legacy executor interface; natural language always goes through validation."""
+    def __init__(self, query_agent):
+        self.query_agent = query_agent
 
-def get_hybrid_agent(
-    db_uri: Optional[str] = None,
-    fast_model: str = "gpt-4o-mini",
-    reasoning_model: str = "gpt-4o"
-):
-    # 1. SQL Bağlantısı (ClickHouse -> SQLite Yedekli & Loglu)
-    db, active_uri, dialect = get_database_connection(custom_uri=db_uri)
-    
-    # 2. Kademe Modeller
-    llm_fast = ChatOpenAI(model=fast_model, temperature=0)
-    llm_reasoning = ChatOpenAI(model=reasoning_model, temperature=0)
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    def invoke(self, inputs):
+        result = self.query_agent.execute_nl_query(inputs["input"])
+        return {"output": str(result["result"]), **result}
 
-    # 3. RAG Bağlantısı
-    index_name = "pazarlama-verileri" 
-    extra_tools = []
-    try:
-        vectorstore = PineconeVectorStore(index_name=index_name, embedding=embeddings)
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-        rag_tool = Tool(
-            name="dokuman_arama_araci",
-            description="Markanın iade politikaları, PDF strateji raporları veya SQL veritabanında olmayan yapılandırılmamış metinleri araştırmak için bu aracı kullan.",
-            func=retriever.invoke
-        )
-        extra_tools.append(rag_tool)
-        logger.info(
-            "RAG tool integrated successfully.",
-            extra={"event_type": "rag_init", "status": "success", "index_name": index_name}
-        )
-    except Exception as e:
-        logger.warning(
-            f"RAG sistemine bağlanılamadı: {e}",
-            extra={"event_type": "rag_init", "status": "failed", "error": str(e)}
-        )
 
-    # 4. Hibrit Ajan (SQL + RAG)
-    agent_executor = create_sql_agent(
-        llm=llm_fast,
-        db=db,
-        agent_type="openai-tools",
-        extra_tools=extra_tools,
-        prefix=SQL_AGENT_PREFIX,
-        verbose=False
-    )
-    
-    # 5. Alt Ajanlar & Sentez Motoru
-    query_agent = QueryAgent(db_uri=active_uri, model_name=fast_model, dialect=dialect, db=db)
+def get_hybrid_agent(db_uri=None, fast_model="gpt-4o-mini", reasoning_model="gpt-4o"):
+    db, active_uri, dialect = get_database_connection(db_uri)
+    key = get_secret("OPENAI_API_KEY")
+    llm = ChatOpenAI(model=reasoning_model, temperature=0, api_key=key) if key else None
+    query_agent = QueryAgent(db_uri=active_uri, model_name=fast_model, dialect=dialect,
+                             db=db, catalog=db.catalog, api_key=key or None)
     rewrite_agent = RewriteNLAgent(model_name=fast_model)
-    synthesis_engine = SynthesisEngine(llm_reasoning)
-    
-    # 6 elemanı tam olarak döndürür
-    return db, llm_reasoning, agent_executor, query_agent, rewrite_agent, synthesis_engine
+    return db, llm, ValidatedExecutor(query_agent), query_agent, rewrite_agent, SynthesisEngine(llm)

@@ -18,3 +18,7 @@ secrets.toml
 logs/*.log
 *.log
 !logs/.gitkeep
+
+# Generated local demonstration data
+data/*.db
+.pytest_cache/

@@ -6,7 +6,8 @@ import json
 import re
 
 # Dinamik motor fonksiyonu
-from agent import get_hybrid_agent
+from agent import get_hybrid_agent, get_secret
+from data_analysis import get_analysis_engine
 
 # --- 1. SAYFA YAPILANDIRMASI ---
 st.set_page_config(
@@ -42,12 +43,12 @@ elif profile_choice == "🧠 Maksimum Hassasiyet":
     selected_fast_model = "gpt-4o"
     selected_reasoning_model = "gpt-4o"
     profile_badge = "🧠 Full GPT-4o"
-    profile_desc = "Tüm aşamalarda en güçlü akıl yürütme modeli kullanılır. Maliyeti daha yüksektir."
+    profile_desc = "Sorgu planlama ve stratejik sentez aşamalarında gpt-4o kullanılır."
 elif profile_choice == "💸 Maksimum Tasarruf & Hız":
     selected_fast_model = "gpt-4o-mini"
     selected_reasoning_model = "gpt-4o-mini"
     profile_badge = "💸 Full GPT-4o-mini"
-    profile_desc = "Tüm süreçler `gpt-4o-mini` ile çalışır. Ultra hızlı ve %90 daha düşük API maliyeti sağlar."
+    profile_desc = "Sorgu planlama ve stratejik sentez aşamalarında gpt-4o-mini kullanılır."
 else:
     c1, c2 = st.sidebar.columns(2)
     with c1:
@@ -59,31 +60,72 @@ else:
 
 st.sidebar.caption(profile_desc)
 
+mod = st.sidebar.radio(
+    "Çalışma Modunu Seçin:",
+    ["🤖 Otonom İçgörü Modu", "👤 Manuel Soru Modu",
+     "🧪 Hipotez Doğrulama Modu", "🔮 Tahminleme (Predictive) Modu",
+     "📊 Veri Analiz Modu (ClickHouse)"]
+)
+
+@st.cache_resource(show_spinner=False)
+def load_analysis_engine(model_name):
+    return get_analysis_engine(model_name, get_secret)
+
+if mod == "📊 Veri Analiz Modu (ClickHouse)":
+    st.subheader("📊 ClickHouse Veri Analizi")
+    st.caption("Sorunuzu yazın; ClickHouse sonuçlarını SQL ve veri tablosuyla inceleyin.")
+    st.sidebar.caption("Veri kaynağı: ClickHouse · En fazla 1000 satır · Sorgu süresi: 30 saniye")
+    try:
+        analysis_engine = load_analysis_engine(selected_fast_model)
+    except Exception:
+        st.error("ClickHouse bağlantısı veya şema okuma başarısız. Bağlantı ayarlarını, "
+                 "okuma izinlerini ve izin verilen tabloların varlığını kontrol edin.")
+        st.stop()
+    with st.expander("Kullanılabilir Veri Şeması"):
+        st.code(analysis_engine.planner.schema)
+    with st.form("clickhouse_analysis"):
+        question = st.text_area("Analiz sorusu", placeholder="Duygu etiketlerinin dağılımı nedir?")
+        submitted = st.form_submit_button("Sorgula")
+    if submitted and question.strip():
+        st.session_state.pop("clickhouse_analysis_result", None)
+        try:
+            with st.spinner("ClickHouse sorgusu hazırlanıyor ve çalıştırılıyor..."):
+                st.session_state.clickhouse_analysis_result = analysis_engine.execute(question.strip())
+        except ValueError as error:
+            st.error(str(error))
+        except Exception:
+            st.error("Sorgu tamamlanamadı. Şemayı, sorgu kapsamını ve ClickHouse erişimini kontrol edin.")
+    result = st.session_state.get("clickhouse_analysis_result")
+    if result:
+        st.caption(result["question"])
+        st.code(result["sql"], language="sql")
+        df = pd.DataFrame(result["rows"], columns=result["columns"])
+        if df.empty:
+            st.info("Sorgu sonucu boş; bu filtrelerle eşleşen veri bulunamadı.")
+        else:
+            st.dataframe(df, width="stretch", hide_index=True)
+            st.caption(f"{len(df)} satır gösteriliyor. Sonuç sorgunun LIMIT değeriyle sınırlıdır.")
+            st.download_button("CSV İndir", df.to_csv(index=False).encode("utf-8-sig"),
+                               "clickhouse_analysis.csv", "text/csv")
+    st.stop()
+
 # Seçilen modele göre motoru önbellekten yükleme
 @st.cache_resource(show_spinner=False)
 def load_app_engine(f_model: str, r_model: str):
     return get_hybrid_agent(fast_model=f_model, reasoning_model=r_model)
 
-engine_bundle = load_app_engine(selected_fast_model, selected_reasoning_model)
-
-if len(engine_bundle) == 6:
-  (
-      db,
-      llm,
-      agent_executor,
-      query_agent,
-      rewrite_agent,
-      synthesis_engine,
-  ) = engine_bundle
-else:
-  # Önbellek eski 5'liyi döndürürse sistemi çökertmeden sentez motorunu tamamla
-  db, llm, agent_executor, query_agent, rewrite_agent = engine_bundle[:5]
-  try:
-    from agent import SynthesisEngine
-
-    synthesis_engine = SynthesisEngine(llm)
-  except Exception:
-    from agent import synthesis_engine
+try:
+    db, llm, agent_executor, query_agent, rewrite_agent, synthesis_engine = load_app_engine(
+        selected_fast_model, selected_reasoning_model)
+except Exception:
+    st.error("Veritabanı başlatılamadı. Bağlantı ayarlarını ve tablo izinlerini kontrol edin.")
+    st.stop()
+st.sidebar.info(f"Aktif veri kaynağı: {query_agent.dialect}")
+if not get_secret("OPENAI_API_KEY"):
+    st.sidebar.caption("OpenAI anahtarı yok: hipotez ve tahmin modları yerelde çalışır; doğal dil modları anahtar gerektirir.")
+    if mod in {"🤖 Otonom İçgörü Modu", "👤 Manuel Soru Modu"}:
+        st.info("Bu mod için OPENAI_API_KEY tanımlayın veya yerel hipotez/tahmin modunu seçin.")
+        st.stop()
 
 st.sidebar.divider()
 st.sidebar.markdown(
@@ -187,7 +229,7 @@ def render_generative_ui(result_data, query_json: dict, title_context: str = "")
         )
         fig.update_traces(textposition="outside")
         fig.update_layout(height=380, margin=dict(l=20, r=20, t=40, b=40), yaxis_title="Bahsedilme Hacmi")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     # Senaryo 2: Kök Neden ve Konu Dağılımı
     elif categorical_cols:
@@ -221,24 +263,15 @@ def render_generative_ui(result_data, query_json: dict, title_context: str = "")
             margin=dict(l=10, r=30, t=40, b=30),
             yaxis=dict(tickfont=dict(size=12))
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
     else:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
 
     with st.expander("📋 Detaylı Veri Tablosunu İncele", expanded=False):
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
 
 # --- 4. ÇALIŞMA MODLARI ---
-mod = st.sidebar.radio(
-    "Çalışma Modunu Seçin:",
-    [
-        "🤖 Otonom İçgörü Modu",
-        "👤 Manuel Soru Modu",
-        "🧪 Hipotez Doğrulama Modu",
-        "🔮 Tahminleme (Predictive) Modu"
-    ]
-)
 
 # MOD 1: OTONOM İÇGÖRÜ MODU
 if mod == "🤖 Otonom İçgörü Modu":
@@ -248,7 +281,7 @@ if mod == "🤖 Otonom İçgörü Modu":
     if st.button("🚀 Otonom Taramayı Başlat"):
         with st.spinner("Veritabanı şeması taranıyor ve makro iş problemi belirleniyor..."):
             schema = query_agent.schema
-            macro_q = rewrite_agent.generate_macro_question("Tablolar: twitter_tweets, demo_brand_users, demo_brand_predictions")
+            macro_q = rewrite_agent.generate_macro_question(schema)
             st.info(f"**Belirlenen Stratejik Araştırma Sorusu:** {macro_q}")
             _, sub_qs = rewrite_agent.decompose_question(macro_q, schema)
             
@@ -418,102 +451,9 @@ elif mod == "👤 Manuel Soru Modu":
 # MOD 3: ÇOKLU VE RAKİP HİPOTEZ DOĞRULAMA MODU (ROADMAP 3E)
 # ==============================================================================
 elif mod == "🧪 Hipotez Doğrulama Modu":
-    st.subheader("🧪 Çoklu ve Rakip Hipotez Doğrulama Motoru")
-    st.write("Tekil doğrulama yanlılığını engelleyin: Fikrinizi Sıfır Hipotezi ($H_0$) ve Rakip Hipotezlerle ($H_2$) çapraz sınayın.")
+    from analytical_ui import hypothesis_panel
+    hypothesis_panel(query_agent)
 
-    hyp_input = st.text_input(
-        "Sınamak istediğiniz iş hipotezini veya gözlemi girin:",
-        value="The sharp decline in Consideration in 2026 means the top of the funnel is narrowing."
-    )
-
-    if st.button("⚖️ Hipotezleri Yarıştır ve Test Et") and hyp_input:
-        with st.spinner("Yarışan hipotezler ($H_0, H_1, H_2$) türetiliyor ve ayırt edici sorgular planlanıyor..."):
-            schema = query_agent.schema
-            hyp_dict, test_qs = rewrite_agent.formulate_competing_hypotheses(hyp_input, schema)
-
-        # Hipotezleri Ekranda 3 Kart Olarak Göster
-        col_h0, col_h1, col_h2 = st.columns(3)
-        with col_h0:
-            st.info(f"**Sıfır Hipotezi ($H_0$):**\n\n{hyp_dict.get('H0', 'Tanımlanmadı')}")
-        with col_h1:
-            st.success(f"**Birincil Hipotez ($H_1$):**\n\n{hyp_dict.get('H1', 'Tanımlanmadı')}")
-        with col_h2:
-            st.warning(f"**Rakip Hipotez ($H_2$):**\n\n{hyp_dict.get('H2', 'Tanımlanmadı')}")
-
-        st.divider()
-
-        # Ayırt Edici SQL Sorgularını Çalıştır
-        evidence_list = []
-        all_query_results = []
-        for i, tq in enumerate(test_qs[:2], 1):
-            with st.status(f"Ayırt Edici Test Aşaması {i}: {tq}", expanded=False):
-                try:
-                    q_res = query_agent.execute_nl_query(tq)
-                    evidence_list.append(f"Test Sorusu: {tq}\nBulgu: {q_res['result']}")
-                    all_query_results.append((tq, q_res))
-                    st.code(q_res['sql'], language="sql")
-                except Exception as e:
-                    evidence_list.append(f"Hata: {e}")
-
-        # Sentez ve Karşılaştırmalı Karne
-        with st.spinner("Pazarlama alan bilgisi işletiliyor ve Karşılaştırmalı Hipotez Karnesi oluşturuluyor..."):
-            combined_evidence = "\n\n".join(evidence_list)
-            scorecard_report = synthesis_engine.evaluate_competing_hypotheses(hyp_dict, combined_evidence)
-
-            st.markdown("### 🏆 Hipotez Karşılaştırma Raporu ve Karne")
-            st.markdown(scorecard_report)
-
-            if all_query_results:
-                tab_titles = [f"📊 Kanıt Verisi (Test {idx+1})" for idx in range(len(all_query_results))]
-                tabs = st.tabs(tab_titles)
-                for idx, tab in enumerate(tabs):
-                    with tab:
-                        tq_text, res_obj = all_query_results[idx]
-                        st.caption(f"**Ayırt Edici Soru:** {tq_text}")
-                        render_generative_ui(res_obj["result"], res_obj["json_query"], f"Kanıt {idx+1}")
-
-
-
-
-# MOD 4: TAHMİNLEME (PREDICTIVE) MODU
 elif mod == "🔮 Tahminleme (Predictive) Modu":
-    st.subheader("🔮 Gelecek Dönem Projeksiyonu ve Trend Tahmini")
-    st.write("Zaman serilerini inceleyerek olası riskleri ve büyüme eğilimlerini öngörün.")
-
-    pred_input = st.text_input(
-        "Geleceğini tahmin etmek istediğiniz metrik veya konuyu girin:",
-        placeholder="Örn: Önümüzdeki dönemde kargo ve teslimat kaynaklı şikayetler nasıl seyredecek?"
-    )
-
-    if st.button("Trend Analizi ve Projeksiyon Üret") and pred_input:
-        with st.spinner("Zaman serisi sorguları planlanıyor..."):
-            schema = query_agent.schema
-            _, trend_qs = rewrite_agent.decompose_predictive_trends(pred_input, schema)
-
-        evidence_list = []
-        all_query_results = []
-        for i, tq in enumerate(trend_qs[:2], 1):
-            with st.status(f"Trend Adımı {i}: {tq}", expanded=False):
-                try:
-                    q_res = query_agent.execute_nl_query(tq)
-                    evidence_list.append(f"Zaman Serisi Bulgusu: {q_res['result']}")
-                    all_query_results.append((tq, q_res))
-                    st.code(q_res['sql'], language="sql")
-                except Exception as e:
-                    evidence_list.append(f"Hata: {e}")
-
-        with st.spinner("Tahminleme ve erken uyarı raporu oluşturuluyor..."):
-            combined_evidence = "\n\n".join(evidence_list)
-            pred_insight = synthesis_engine.synthesize_predictive_insight(pred_input, combined_evidence)
-
-            st.markdown("### 📈 Gelecek Trend Projeksiyonu ve Risk Analizi")
-            st.warning(pred_insight)
-
-            if all_query_results:
-                tab_titles = [f"📊 Trend Dağılımı (Adım {idx+1})" for idx in range(len(all_query_results))]
-                tabs = st.tabs(tab_titles)
-                for idx, tab in enumerate(tabs):
-                    with tab:
-                        tq_text, res_obj = all_query_results[idx]
-                        st.caption(f"**Trend Sorusu:** {tq_text}")
-                        render_generative_ui(res_obj["result"], res_obj["json_query"], f"Trend {idx+1}")
+    from analytical_ui import forecast_panel
+    forecast_panel(query_agent)

@@ -1,0 +1,13 @@
+# Tested with CPython 3.12 on Windows. requirements.txt also locks transitive packages.
+streamlit==1.50.0
+langchain-core==0.3.79
+langchain-openai==0.3.35
+langchain-community==0.3.31
+plotly==6.3.1
+pandas==2.3.3
+numpy==2.3.3
+scipy==1.16.2
+statsmodels==0.14.5
+SQLAlchemy==2.0.43
+clickhouse-connect==0.9.2
+graypy==2.1.0

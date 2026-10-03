@@ -6,6 +6,7 @@ Desteklenen lehçeler (dialects): 'sqlite', 'clickhouse'
 
 import re
 from typing import Any, Optional
+from agents.query_validation import validate_query_plan
 
 # --- 1. OPERATÖR HARİTASI VE TOPLAMA FONKSİYONLARI ---
 _FILTER_OP_TO_SQL = {
@@ -27,7 +28,7 @@ _FILTER_OP_TO_SQL = {
     "HAS_ALL": "HAS_ALL",
 }
 
-_AGG_OPS = frozenset({"count", "count_distinct", "sum", "avg", "min", "max", "group_array"})
+_AGG_OPS = frozenset({"count", "count_distinct", "sum", "avg", "min", "max", "group_array", "stddev_samp"})
 _DANGEROUS_IDENT_RE = re.compile(r"[;\x00]|--|/\*")
 
 
@@ -59,7 +60,7 @@ def quote_ident(name: str, dialect: str = "sqlite", quote_char: Optional[str] = 
     return f"{quote_char}{escaped}{quote_char}"
 
 
-def _lit(v: Any) -> str:
+def _lit(v: Any, dialect: str = "sqlite") -> str:
     """Değerleri SQL injection güvenliği için kaçışlayarak biçimlendirir."""
     if v is None:
         return "NULL"
@@ -67,32 +68,34 @@ def _lit(v: Any) -> str:
         return "1" if v else "0"
     if isinstance(v, (int, float)):
         return str(v)
-    s = str(v).replace("\x00", "").replace("'", "''")
+    s = str(v).replace("\x00", "")
+    if dialect == "clickhouse":
+        s = s.replace("\\", "\\\\")
+    s = s.replace("'", "''")
     return f"'{s}'"
 
 
-def _contains_lit(v: Any) -> str:
+def _contains_lit(v: Any, dialect: str = "sqlite") -> str:
     """LIKE / ILIKE sorguları için güvenli '%metin%' formatına dönüştürür."""
-    s = str(v).replace("\x00", "").replace("'", "''")
-    return f"'%{s}%'"
+    return _lit(f"%{v}%", dialect=dialect)
 
 
-def _format_array_lit(vals: list[Any]) -> str:
+def _format_array_lit(vals: list[Any], dialect: str = "clickhouse") -> str:
     """ClickHouse array formatına dönüştürür (['val1', 'val2'])."""
-    return f"[{', '.join(_lit(v) for v in vals)}]"
+    return f"[{', '.join(_lit(v, dialect=dialect) for v in vals)}]"
 
 
 def _compile_join(j: dict[str, Any], dialect: str = "sqlite") -> str:
     """JSON nesnesindeki JOIN tanımını SQL ifadesine dönüştürür."""
     if not isinstance(j, dict):
-        return ""
+        raise ValueError("Geçersiz JOIN tanımı.")
     j_type = (j.get("type") or "INNER").upper().strip()
-    if j_type not in ("INNER", "LEFT", "RIGHT", "CROSS", "FULL", "OUTER"):
-        j_type = "INNER"
+    if j_type not in ("INNER", "LEFT", "RIGHT", "CROSS", "FULL"):
+        raise ValueError("Geçersiz JOIN türü.")
 
     j_table = j.get("table")
     if not j_table:
-        return ""
+        raise ValueError("JOIN tablosu gerekli.")
 
     q_table = quote_ident(str(j_table), dialect=dialect)
     alias = j.get("alias")
@@ -100,22 +103,13 @@ def _compile_join(j: dict[str, Any], dialect: str = "sqlite") -> str:
         q_table += f" AS {quote_ident(str(alias), dialect=dialect)}"
 
     on = j.get("on")
+    if j_type == "CROSS" and on is None:
+        return f"CROSS JOIN {q_table}"
     if isinstance(on, dict):
         left = quote_ident(str(on.get("left") or on.get("left_col") or ""), dialect=dialect)
         right = quote_ident(str(on.get("right") or on.get("right_col") or ""), dialect=dialect)
         return f"{j_type} JOIN {q_table} ON {left} = {right}"
-    elif isinstance(on, (list, tuple)) and len(on) == 2:
-        left = quote_ident(str(on[0]), dialect=dialect)
-        right = quote_ident(str(on[1]), dialect=dialect)
-        return f"{j_type} JOIN {q_table} ON {left} = {right}"
-    elif isinstance(on, str) and "=" in on:
-        parts = on.split("=", 1)
-        left = quote_ident(parts[0].strip(), dialect=dialect)
-        right = quote_ident(parts[1].strip(), dialect=dialect)
-        return f"{j_type} JOIN {q_table} ON {left} = {right}"
-    elif on:
-        return f"{j_type} JOIN {q_table} ON {on}"
-    return f"{j_type} JOIN {q_table}"
+    raise ValueError("Ham JOIN koşulları desteklenmiyor.")
 
 
 # --- 3. JSON-TO-SQL DERLEYİCİSİ (SQLITE & CLICKHOUSE) ---
@@ -126,6 +120,7 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
     Desteklenen lehçeler: 'sqlite', 'clickhouse'
     """
     dialect = (dialect or "sqlite").lower().strip()
+    query_json = validate_query_plan(query_json, dialect=dialect)
     table = query_json.get("table")
     if not table:
         raise ValueError("JSON sorgusunda zorunlu 'table' alanı eksik!")
@@ -144,7 +139,20 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
     limit = query_json.get("limit")
     array_joins = query_json.get("array_joins") or query_json.get("array_join") or []
 
-    select_parts: list[str] = [quote_ident(str(g), dialect=dialect) for g in group_by]
+    bucket = query_json.get("time_bucket")
+    select_parts: list[str] = []
+    if bucket:
+        q_col = quote_ident(bucket["column"], dialect=dialect)
+        if dialect == "clickhouse":
+            functions = {"day": "toDate", "week": "toMonday", "month": "toStartOfMonth"}
+            bucket_expr = f"{functions[bucket['grain']]}({q_col})"
+        else:
+            formats = {"day": f"date({q_col})", "week": f"date({q_col}, '-6 days', 'weekday 1')",
+                       "month": f"date({q_col}, 'start of month')"}
+            bucket_expr = formats[bucket["grain"]]
+        select_parts.append(f"{bucket_expr} AS {quote_ident(bucket['as'], dialect=dialect)}")
+    select_parts.extend(quote_ident(str(g), dialect=dialect) for g in group_by
+                        if not bucket or g != bucket["as"])
 
     for agg in aggregates:
         if not isinstance(agg, dict):
@@ -172,6 +180,9 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
                 expr = f"groupArray({q_col})"
             else:
                 expr = f"group_concat({q_col})"
+        elif op == "stddev_samp":
+            function = "stddevSamp" if dialect == "clickhouse" else "stddev_samp"
+            expr = f"{function}({quote_ident(str(col), dialect=dialect)})"
         else:
             if not col:
                 raise ValueError(f"'{op}' toplama işlemi için sütun adı zorunludur.")
@@ -185,6 +196,10 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
     select_clause = ", ".join(select_parts)
     from_clause = q_table
 
+    # Ordinary joins precede ARRAY JOIN in ClickHouse's FROM clause.
+    for j in joins:
+        from_clause += " " + _compile_join(j, dialect=dialect)
+
     # ClickHouse ARRAY JOIN desteği
     if dialect == "clickhouse" and array_joins:
         aj_list = array_joins if isinstance(array_joins, list) else [array_joins]
@@ -197,12 +212,6 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
                 from_clause += f" ARRAY JOIN {aj_col}{aj_as}"
 
     sql = f"SELECT {select_clause} FROM {from_clause}"
-
-    # JOIN ifadelerini ekle
-    for j in joins:
-        j_sql = _compile_join(j, dialect=dialect)
-        if j_sql:
-            sql += f" {j_sql}"
 
     # WHERE koşullarını derle
     where_parts: list[str] = []
@@ -236,16 +245,16 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
             else:
                 vals = val if isinstance(val, (list, tuple)) else [val]
                 if vals:
-                    where_parts.append(f"{q_col} {sql_op} ({', '.join(_lit(v) for v in vals)})")
+                    where_parts.append(f"{q_col} {sql_op} ({', '.join(_lit(v, dialect=dialect) for v in vals)})")
         elif sql_op == "BETWEEN":
             if isinstance(val, (list, tuple)) and len(val) == 2:
-                where_parts.append(f"{q_col} BETWEEN {_lit(val[0])} AND {_lit(val[1])}")
+                where_parts.append(f"{q_col} BETWEEN {_lit(val[0], dialect=dialect)} AND {_lit(val[1], dialect=dialect)}")
         elif op_key == "HAS":
             if dialect == "clickhouse":
                 if isinstance(val, (list, tuple)):
                     where_parts.append(f"hasAny({q_col}, {_format_array_lit(val)})")
                 else:
-                    where_parts.append(f"has({q_col}, {_lit(val)})")
+                    where_parts.append(f"has({q_col}, {_lit(val, dialect=dialect)})")
             else:
                 where_parts.append(f"{q_col} LIKE {_contains_lit(val)}")
         elif op_key == "HAS_ANY":
@@ -264,13 +273,13 @@ def compile_json_to_sql(query_json: dict[str, Any], dialect: str = "sqlite") -> 
                 where_parts.append(f"({' AND '.join(conditions)})")
         elif op_key == "ILIKE":
             if dialect == "clickhouse":
-                where_parts.append(f"{q_col} ILIKE {_contains_lit(val)}")
+                where_parts.append(f"{q_col} ILIKE {_contains_lit(val, dialect=dialect)}")
             else:
                 where_parts.append(f"{q_col} LIKE {_contains_lit(val)}")
         elif op_key == "LIKE":
-            where_parts.append(f"{q_col} LIKE {_contains_lit(val)}")
+            where_parts.append(f"{q_col} LIKE {_contains_lit(val, dialect=dialect)}")
         else:
-            where_parts.append(f"{q_col} {sql_op} {_lit(val)}")
+            where_parts.append(f"{q_col} {sql_op} {_lit(val, dialect=dialect)}")
 
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)

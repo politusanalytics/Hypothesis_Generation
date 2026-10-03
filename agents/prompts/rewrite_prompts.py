@@ -53,7 +53,8 @@ MACRO_QUESTION_PROMPT = """\
 Sen uzman bir pazarlama direktörüsün. Veritabanı özeti:
 {info}
 
-Tüketici yolculuğundaki tıkanıklıkları sorgulayan tek bir stratejik soru üret. Sadece soruyu yaz.\
+Yalnızca verilen şemayla yanıtlanabilir tek bir stratejik soru üret.
+Şemada olmayan alan veya tablo varsayma. Sadece soruyu yaz.\
 """
 
 
@@ -64,9 +65,11 @@ Sen kıdemli bir veri analistisin. Veritabanı şeması:
 
 Soru: {question}
 
-GÖREVİN: Bu soruyu çözecek 2 net alt soru üret.
-1. Kök nedenlerde mikro 'topic_name' yerine 'topic_categories' veya 'products' grupla.
-2. Demografi için 'twitter_tweets.author_id = demo_brand_users.id' JOIN şartı ve 'is_org = 0' filtresi uygula.
+GÖREVİN: Bu soruyu çözecek 2 net alt soru üret. Yalnızca verilen şemadaki
+alanları ve ilişkileri kullan; veri tarihlerini veya tablo adlarını varsayma.
+1. Kök nedenlerde şemada mevcut üst kategori veya ürün alanlarını grupla.
+2. Demografi için yalnızca şemada mevcut anahtarları birleştir; bot/kurum filtresini
+   yalnızca böyle bir alan mevcutsa ve kullanıcı kapsamına uygunsa kullan.
 Soruların başına tire (-) koy.\
 """
 
@@ -79,14 +82,16 @@ VERİTABANI ŞEMASI:
 
 Kullanıcının Test Etmek İstediği Gözlem: {topic}
 
+Yalnızca şemayla ölçülebilen farklar için araştırma taslağı üret.
+Bu taslak istatistiksel test veya nedensellik kararı değildir; veri tarihlerini varsayma.
 YALNIZCA AŞAĞIDAKİ GEÇERLİ JSON FORMATINDA YANIT VER:
 {{
-  "H0": "Consideration aşamasındaki düşüş genel pazar hacmi daralmasından kaynaklanmaktadır; markaya özel bir funnel daralması yoktur.",
-  "H1": "Consideration hacmindeki çöküş, pazarlama hunisinin tepe noktasının tıkandığını ve yeni tüketici akışının kesildiğini gösterir.",
-  "H2": "Tüketiciler değerlendirme aşamasını atlayıp doğrudan satın almaya geçmekte veya rakip markalara yönelmektedir.",
+  "H0": "<ölçülebilir fark yoktur>",
+  "H1": "<ölçülebilir fark vardır>",
+  "H2": "<mevcut veriden değerlendirilebilen alternatif açıklama veya test edilemiyor>",
   "test_questions": [
-    "2025 ve 2026 yıllarında consumer_journey aşamalarının toplam tweet sayılarını getir.",
-    "2026 yılında en çok bahsedilen ilk 5 topic_categories konusunu ve tweet sayılarını listele."
+    "<verilen şemayla yanıtlanabilir birinci soru>",
+    "<verilen şemayla yanıtlanabilir ikinci soru>"
   ]
 }}\
 """
@@ -99,5 +104,6 @@ Sen bir tahminleme veri bilimcisisin. Veritabanı şeması:
 
 Tahmin Talebi: {question}
 
-Geçmiş trendleri verecek 2 net SQL alt sorusu kurgula. Soruların başına tire (-) koy.\
+Yalnızca mevcut şemadaki tarih ve metriklerle dönemlik toplama için 2 SQL alt sorusu
+kurgula. Şemada tarih yoksa belirt; tarih veya sütun uydurma. Soruların başına tire (-) koy.\
 """

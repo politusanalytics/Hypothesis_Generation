@@ -12,6 +12,18 @@ from logger import logger, log_query, StructuredExtraFormatter
 
 class TestLogger(unittest.TestCase):
 
+    def test_sensitive_payloads_and_traceback_are_masked(self):
+        record = logging.LogRecord("test", logging.ERROR, __file__, 1,
+                                   "Failed for %s with sk-secret-key", ("person@example.com",), None)
+        record.question = "Alice's private question"
+        record.sql = "SELECT 'private'"
+        record.result_sample = "Alice"
+        record.error = "password=secret"
+        formatted = StructuredExtraFormatter("%(message)s").format(record)
+        for secret in ("person@example.com", "sk-secret-key", "Alice", "SELECT", "password=secret"):
+            self.assertNotIn(secret, formatted)
+        self.assertIn("REDACTED", formatted)
+
     def setUp(self):
         self.log_dir = Path(__file__).parent.parent / "logs"
         self.log_file = self.log_dir / "app.log"
@@ -53,7 +65,9 @@ class TestLogger(unittest.TestCase):
         with open(self.log_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
         last_line = lines[-1]
-        self.assertIn("Trendyol duygu analizi", last_line)
+        self.assertNotIn("Trendyol duygu analizi", last_line)
+        self.assertNotIn("18-29", last_line)
+        self.assertNotIn("SELECT", last_line)
         self.assertIn("query_execution", last_line)
 
         log_query(
@@ -65,8 +79,9 @@ class TestLogger(unittest.TestCase):
         with open(self.log_file, "r", encoding="utf-8") as f:
             lines = f.readlines()
         last_line = lines[-1]
-        self.assertIn("Query Failed: Hatalı tablo sorgusu", last_line)
-        self.assertIn("no such table", last_line)
+        self.assertIn("Query Failed", last_line)
+        self.assertNotIn("Hatalı tablo sorgusu", last_line)
+        self.assertNotIn("no such table", last_line)
 
 
 if __name__ == "__main__":

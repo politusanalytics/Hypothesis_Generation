@@ -110,16 +110,8 @@ class RewriteNLAgent:
             test_questions = [str(q).strip() for q in data.get("test_questions", []) if str(q).strip()]
             if len(test_questions) < 2:
                 raise ValueError("Yetersiz alt soru")
-        except Exception:
-            hypotheses = {
-                "H0": "Consideration düşüşü dönemsel pazar dalgalanmasıdır.",
-                "H1": "Consideration çöküşü huninin tepe noktasının daraldığını gösterir.",
-                "H2": "Tüketiciler doğrudan satın almaya geçmekte veya alternatif markalara kaymaktadır."
-            }
-            test_questions = [
-                "2025 ve 2026 yıllarında consumer_journey aşamalarının toplam tweet sayılarını getir.",
-                "2026 yılındaki tweetlerin en yüksek hacimli topic_categories dağılımını getir."
-            ]
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ValueError("Hipotez araştırma planı geçersiz; otomatik varsayım üretilmedi.") from None
 
         return hypotheses, test_questions
 
