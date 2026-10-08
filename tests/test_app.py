@@ -62,3 +62,10 @@ class TestApplication(unittest.TestCase):
         app = self.app("📊 Veri Analiz Modu (ClickHouse)")
         self.assertEqual(len(app.error), 1)
         self.assertIn("ClickHouse", app.error[0].value)
+
+    def test_missing_sqlite_file_explains_backend_selection(self):
+        with patch.dict(os.environ, {"SQLITE_DB_PATH": str(Path(self.folder.name) / "missing.db")}):
+            app = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app.py"), default_timeout=30).run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.error), 1)
+        self.assertIn("DATABASE_BACKEND", app.error[0].value)

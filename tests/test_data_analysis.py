@@ -93,7 +93,7 @@ class TestClickHouseAnalysis(unittest.TestCase):
         query_module = MagicMock()
         config = {"CLICKHOUSE_HOST": "test-host"}
         with patch.dict(sys.modules, {"clickhouse_connect": connector, "agents.query_agent": query_module}):
-            with self.assertRaises(ConnectionError):
+            with self.assertRaisesRegex(ValueError, "ClickHouse"):
                 get_analysis_engine("test", lambda key, default="": config.get(key, default))
         query_module.QueryAgent.assert_not_called()
 

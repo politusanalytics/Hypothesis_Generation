@@ -8,7 +8,7 @@ import streamlit as st
 
 from agents.query_agent import QueryAgent
 from agents.rewrite_nl_agent import RewriteNLAgent
-from database import SQLiteDatabase, connect_clickhouse
+from database import DatabaseInitializationError, SQLiteDatabase, connect_clickhouse
 from logger import logger
 from agents.prompts.domain_prompts import get_domain_context_prompt
 from agents.prompts.synthesis_prompts import EXECUTIVE_SUMMARY_PROMPT
@@ -59,7 +59,7 @@ def get_database_connection(custom_uri=None):
         return db, custom_uri, "sqlite"
     backend = get_secret("DATABASE_BACKEND", "auto").lower()
     if backend not in {"auto", "clickhouse", "sqlite"}:
-        raise ValueError("DATABASE_BACKEND auto/clickhouse/sqlite olmalı.")
+        raise DatabaseInitializationError("DATABASE_BACKEND auto/clickhouse/sqlite olmalı.")
     if backend == "clickhouse" or (backend == "auto" and get_secret("CLICKHOUSE_HOST")):
         try:
             db = connect_clickhouse(get_secret)
@@ -67,6 +67,8 @@ def get_database_connection(custom_uri=None):
             return db, "clickhouse", "clickhouse"
         except Exception as error:
             logger.error("ClickHouse connection failed.", extra={"error_type": type(error).__name__})
+            if isinstance(error, DatabaseInitializationError):
+                raise
             raise ValueError("ClickHouse bağlantısı kurulamadı; bağlantı ve tablo izinlerini kontrol edin.") from None
     path = get_secret("SQLITE_DB_PATH", str(Path(__file__).parent / "insight_generation_bot.db"))
     return SQLiteDatabase(path), "sqlite:///" + path, "sqlite"

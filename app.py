@@ -8,6 +8,7 @@ import re
 # Dinamik motor fonksiyonu
 from agent import get_hybrid_agent, get_secret
 from data_analysis import get_analysis_engine
+from database import DatabaseInitializationError
 
 # --- 1. SAYFA YAPILANDIRMASI ---
 st.set_page_config(
@@ -77,6 +78,9 @@ if mod == "📊 Veri Analiz Modu (ClickHouse)":
     st.sidebar.caption("Veri kaynağı: ClickHouse · En fazla 1000 satır · Sorgu süresi: 30 saniye")
     try:
         analysis_engine = load_analysis_engine(selected_fast_model)
+    except DatabaseInitializationError as error:
+        st.error(str(error))
+        st.stop()
     except Exception:
         st.error("ClickHouse bağlantısı veya şema okuma başarısız. Bağlantı ayarlarını, "
                  "okuma izinlerini ve izin verilen tabloların varlığını kontrol edin.")
@@ -117,8 +121,11 @@ def load_app_engine(f_model: str, r_model: str):
 try:
     db, llm, agent_executor, query_agent, rewrite_agent, synthesis_engine = load_app_engine(
         selected_fast_model, selected_reasoning_model)
+except DatabaseInitializationError as error:
+    st.error(str(error))
+    st.stop()
 except Exception:
-    st.error("Veritabanı başlatılamadı. Bağlantı ayarlarını ve tablo izinlerini kontrol edin.")
+    st.error("Uygulama motoru başlatılamadı. Veritabanı ve model yapılandırmasını kontrol edin.")
     st.stop()
 st.sidebar.info(f"Aktif veri kaynağı: {query_agent.dialect}")
 if not get_secret("OPENAI_API_KEY"):

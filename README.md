@@ -208,6 +208,31 @@ dalına gönderin; gerekirse uygulamayı [Reboot](https://docs.streamlit.io/depl
 ile yeniden başlatın. Cloud'daki mevcut kullanıcı adı, parola ve veritabanı ayarlarını
 koruyun; örnek secrets dosyasındaki boş değerlerle değiştirmeyin.
 
+## Cloud'da veritabanı başlatma hatası
+
+Cloud Secrets içinde ClickHouse için `DATABASE_BACKEND = "clickhouse"` seçin.
+Örnek secrets yerel SQLite demosunu seçer; `data/demo_analytics.db` Git'e dahil
+edilmediğinden bu dosya Cloud'da kendiliğinden bulunmaz. Mevcut bağlantı parolanızı
+ve anahtarınızı koruyun. `CLICKHOUSE_DB` gerçek veritabanınız; `CLICKHOUSE_TABLES`
+bu veritabanında bulunan ve kullanıcıya okuma izni verilen tablo adları olmalıdır.
+Varsayılan dört tablodan biri bile bulunamazsa şema yüklenmesi durur.
+
+Başlangıç mesajları bağlantı ile şema okuma hatalarını ayırır. ClickHouse kod 60
+tablonun, 81 veritabanının bulunamadığını; 516 kimlik doğrulamasının başarısız
+olduğunu belirtir. Ham sürücü hataları, URL, parola, SQL veya veri örneği gösterilmez.
+Diğer bağlantı hatalarında host/HTTP(S) port/TLS ve ağ erişimini kontrol edin;
+Cloud'daki `localhost` kendi bilgisayarınıza bağlanmaz.
+
+OpenAI çağrısı yapmadan bağlantıyı ve tüm yapılandırılmış tabloları kontrol etmek için:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_connection.py --clickhouse
+```
+
+Yerelde çalışan bağlantı Cloud ağından erişimin de çalıştığını kanıtlamaz.
+GitHub'a düzeltmeyi gönderdikten sonra Cloud Secrets ayarlarını kaydedin ve uygulamayı
+yeniden başlatın; ekranda görünen güvenli teşhis mesajına göre ayarları düzeltin.
+
 ## Kullanılan hesaplama yöntemleri
 
 - [SciPy Welch testi](https://docs.scipy.org/doc/scipy-1.16.2/reference/generated/scipy.stats.ttest_ind_from_stats.html)
