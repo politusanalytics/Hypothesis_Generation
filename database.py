@@ -113,11 +113,15 @@ def connect_clickhouse(get_config):
     if not host:
         raise ValueError("CLICKHOUSE_HOST tanımlanmalı.")
     secure = get_config("CLICKHOUSE_SECURE", "false").lower() in {"true", "1", "yes"}
+    port = int(get_config("CLICKHOUSE_PORT", "8443" if secure else "8123"))
+    # Preserve the HTTPS tunnel behavior from the merged connection code.
+    secure = secure or port == 443
+    verify = get_config("CLICKHOUSE_VERIFY", "true").lower() not in {"false", "0", "no"}
     client = clickhouse_connect.get_client(
-        host=host, port=int(get_config("CLICKHOUSE_PORT", "8443" if secure else "8123")),
+        host=host, port=port,
         username=get_config("CLICKHOUSE_USERNAME", "default"),
         password=get_config("CLICKHOUSE_PASSWORD"), database=get_config("CLICKHOUSE_DB", "default"),
-        secure=secure, connect_timeout=10, send_receive_timeout=35, autogenerate_session_id=False)
+        secure=secure, verify=verify, connect_timeout=10, send_receive_timeout=35, autogenerate_session_id=False)
     try:
         configured = get_config("CLICKHOUSE_TABLES", ",".join(CORE_TABLES))
         tables = tuple(t.strip() for t in configured.split(",") if t.strip())

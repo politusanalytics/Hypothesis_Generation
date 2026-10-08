@@ -149,7 +149,10 @@ CLICKHOUSE_TABLES = "tweet_predictions,tweets,users,user_factors"
 ```
 
 TLS için `CLICKHOUSE_SECURE = "true"` ve sunucunuzun TLS HTTP portunu (çoğunlukla
-8443) kullanın. HOST alanına `https://` eklemeyin. İzin listesinde yalnızca erişilebilir
+8443) kullanın. Port 443 kullanıldığında HTTPS otomatik etkinleştirilir.
+`CLICKHOUSE_VERIFY` varsayılan olarak `"true"` değerindedir; mevcut bağlantı
+ayarlarında açıkça verilen değer ortak bağlantı koduna iletilir.
+HOST alanına `https://` eklemeyin. İzin listesinde yalnızca erişilebilir
 tabloları/view'ları belirtin; varsayılan dört tablonun tamamının bulunması gerekir.
 
 ```powershell
@@ -183,6 +186,27 @@ kalıpları mesajlarda filtrelenir. Aynı filtre yerel dosya, konsol ve Graylog'
 
 Bu işlem `logs/app.log*` dosyalarında eski mesaj ve hassas alanları geri alınamayacak
 şekilde maskeler. Eski Graylog kayıtları sunucuda ayrıca yönetilmelidir.
+
+## Streamlit Cloud'da import sırasında IndentationError
+
+`app.py` içindeki `from agent import ...` satırında gösterilen hata, `agent.py`
+dosyasındaki çözümlenmemiş Git birleştirme işaretlerinden kaynaklanabilir.
+Çakışma işaretlerini silmekle birlikte iki kod sürümünden tutarlı bir akış seçilmelidir;
+yalnızca işaretleri silip iki bağlantı akışını birlikte bırakmayın.
+Uygulama ortak `database.connect_clickhouse` bağlantısını kullanır.
+
+GitHub'a yüklemeden önce:
+
+```powershell
+.\.venv\Scripts\python.exe -m py_compile agent.py database.py app.py
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+`test_repository_integrity.py` tüm Python kaynaklarının sözdizimini ve örnek
+secrets dosyasının TOML biçimini denetler. Düzeltmeyi Streamlit'in izlediği GitHub
+dalına gönderin; gerekirse uygulamayı [Reboot](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/reboot-your-app)
+ile yeniden başlatın. Cloud'daki mevcut kullanıcı adı, parola ve veritabanı ayarlarını
+koruyun; örnek secrets dosyasındaki boş değerlerle değiştirmeyin.
 
 ## Kullanılan hesaplama yöntemleri
 

@@ -62,67 +62,6 @@ def get_database_connection(custom_uri=None):
         raise ValueError("DATABASE_BACKEND auto/clickhouse/sqlite olmalı.")
     if backend == "clickhouse" or (backend == "auto" and get_secret("CLICKHOUSE_HOST")):
         try:
-<<<<<<< HEAD
-            if dialect == "clickhouse":
-                db = SQLDatabase.from_uri(custom_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-            else:
-                db = SQLDatabase.from_uri(custom_uri)
-            db.get_table_info()
-            return db, custom_uri, dialect
-        except Exception as e:
-            log_db_fallback(target_db=custom_uri, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
-            sqlite_uri = "sqlite:///insight_generation_bot.db"
-            return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
-
-    ch_host = get_secret("CLICKHOUSE_HOST")
-    if ch_host:
-        ch_port = get_secret("CLICKHOUSE_PORT", "8123")
-        ch_user = get_secret("CLICKHOUSE_USERNAME", "default")
-        ch_pass = get_secret("CLICKHOUSE_PASSWORD", "")
-        ch_db = get_secret("CLICKHOUSE_DB", "default")
-        ch_secure = get_secret("CLICKHOUSE_SECURE", "")
-        ch_verify = get_secret("CLICKHOUSE_VERIFY", "")
-        
-        auth = f"{ch_user}:{ch_pass}@" if (ch_user or ch_pass) else ""
-
-        params = []
-        if ch_secure.lower() in ("true", "1", "yes") or str(ch_port) == "443":
-            params.append("secure=True")
-        if ch_verify.lower() in ("false", "0", "no"):
-            params.append("verify=False")
-        query_str = f"?{'&'.join(params)}" if params else ""
-
-        # clickhouse-connect official SQLAlchemy dialect is clickhousedb://
-        ch_uri = f"clickhousedb://{auth}{ch_host}:{ch_port}/{ch_db}{query_str}"
-        sanitized_target = f"clickhousedb://{ch_host}:{ch_port}/{ch_db}{query_str}"
-        
-        try:
-            db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-            db.get_table_info()  # Şema derleme doğrulaması
-            logger.info(
-                "Connected to ClickHouse successfully.",
-                extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host}
-            )
-            return db, ch_uri, "clickhouse"
-        except Exception as e:
-            # Fallback attempt with legacy clickhouse+http if clickhouse-sqlalchemy is present
-            try:
-                legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}{query_str}"
-                db = SQLDatabase.from_uri(legacy_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-                db.get_table_info()
-                logger.info(
-                    "Connected to ClickHouse via clickhouse+http successfully.",
-                    extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host}
-                )
-                return db, legacy_uri, "clickhouse"
-            except Exception:
-                pass
-            log_db_fallback(target_db=sanitized_target, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
-
-    # SQLite Varsayılan Veritabanı
-    sqlite_uri = "sqlite:///insight_generation_bot.db"
-    return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
-=======
             db = connect_clickhouse(get_secret)
             logger.info("ClickHouse connection established.", extra={"event_type": "database_connection"})
             return db, "clickhouse", "clickhouse"
@@ -131,7 +70,6 @@ def get_database_connection(custom_uri=None):
             raise ValueError("ClickHouse bağlantısı kurulamadı; bağlantı ve tablo izinlerini kontrol edin.") from None
     path = get_secret("SQLITE_DB_PATH", str(Path(__file__).parent / "insight_generation_bot.db"))
     return SQLiteDatabase(path), "sqlite:///" + path, "sqlite"
->>>>>>> 855fba7 (5. mod eklendi)
 
 
 class ValidatedExecutor:
