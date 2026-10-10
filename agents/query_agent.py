@@ -4,6 +4,7 @@ Doğal dil sorgularını yapılandırılmış JSON formatına dönüştürür ve
 """
 
 import os
+import copy
 import json
 import logging
 import re
@@ -47,6 +48,26 @@ _QUERY_GENERATOR_SYSTEM_PROMPT = QUERY_GENERATOR_SYSTEM_PROMPT
 
 import time
 from agents.query_validation import validate_query_plan
+
+
+def _normalize_generated_aggregates(plan):
+    """Losslessly wrap singleton aggregate objects only at the LLM boundary."""
+    plan = copy.deepcopy(plan)
+
+    def visit(node, depth=0):
+        if not isinstance(node, dict) or depth > 4:
+            return
+        if isinstance(node.get("aggregates"), dict):
+            node["aggregates"] = [node["aggregates"]]
+        filters = node.get("filters", [])
+        if isinstance(filters, list):
+            for item in filters:
+                if isinstance(item, dict) and isinstance(item.get("op"), str) \
+                        and item["op"].upper() in {"IN", "NOT_IN"}:
+                    visit(item.get("value"), depth + 1)
+
+    visit(plan)
+    return plan
 
 try:
     from logger import log_query
@@ -117,26 +138,47 @@ class QueryAgent:
         return self._llm
 
     def generate_query_json(self, question: str) -> dict[str, Any]:
-        """Kullanıcı sorusunu ilişkisel JSON sorgusuna çevirir."""
-        prompt = ChatPromptTemplate.from_messages([
+        """Generate and validate a plan; allow one correction before failing closed."""
+        messages = [
             ("system", self.system_prompt),
             ("user", "Bu soruyu yapılandırılmış JSON formatına çevir: {question}")
-        ])
-        chain = prompt | self.llm
-        response = chain.invoke({"schema": self.schema, "question": question, "dialect": self.dialect})
-        raw_text = response.content.strip()
-
-        # Markdown işaretlerini temizle
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text)
-            raw_text = re.sub(r"\n?```$", "", raw_text).strip()
-
-        try:
-            query_json = json.loads(raw_text)
-            return query_json
-        except json.JSONDecodeError as e:
-            logger.error("LLM çıktısı JSON olarak ayrıştırılamadı.")
-            raise ValueError(f"Geçersiz JSON formatı: {e}") from e
+        ]
+        context = {"schema": self.schema, "question": question, "dialect": self.dialect}
+        last_error = ""
+        for attempt in range(2):
+            active_messages = messages
+            if attempt:
+                active_messages = messages + [("user",
+                    "Önceki plan doğrulanamadı: {validation_error}\n"
+                    "Aynı soruyu ve kapsamını koruyarak geçerli JSON planını yeniden üret. "
+                    "Filtreleri kaldırma. Liste alanlarında tek öğe için bile [] kullan. "
+                    "SQL yazma; desteklenmeyen sorgu için error alanı döndür.")]
+            chain = ChatPromptTemplate.from_messages(active_messages) | self.llm
+            response = chain.invoke({**context, "validation_error": last_error})
+            if not isinstance(response.content, str):
+                last_error = "Model yanıtı JSON metni olmalı."
+                continue
+            raw_text = response.content.strip()
+            if raw_text.startswith("```"):
+                raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
+                raw_text = re.sub(r"\s*```$", "", raw_text).strip()
+            try:
+                query_json = json.loads(raw_text)
+            except json.JSONDecodeError:
+                last_error = "Geçersiz JSON formatı."
+                continue
+            # An explicit unsupported-query response is not a formatting failure.
+            if isinstance(query_json, dict) and query_json.get("error"):
+                raise ValueError(str(query_json["error"]))
+            try:
+                query_json = _normalize_generated_aggregates(query_json)
+                return validate_query_plan(query_json, dialect=self.dialect,
+                                           catalog=self.catalog, default_limit=1000)
+            except ValueError as error:
+                last_error = str(error)
+            except TypeError:
+                last_error = "Sorgu planındaki alan türleri geçersiz."
+        raise ValueError("Geçerli sorgu planı üretilemedi. " + last_error) from None
 
     def execute_nl_query(self, question: str, dialect: Optional[str] = None) -> dict[str, Any]:
         """Doğal dil sorusunu JSON ve SQL derleme adımlarından geçirip veritabanında çalıştırır."""

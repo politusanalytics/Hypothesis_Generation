@@ -17,18 +17,25 @@ bu yalnızca metin eşleşmesidir. Kesin öğe üyeliği gerekiyorsa desteklenme
 PLAN ALANLARI:
 table: ana tablo; alias: isteğe bağlı takma ad.
 columns: sütun adları listesi; group_by: sütun veya time_bucket takma adları listesi.
-joins: table, alias (isteğe bağlı), type (INNER/LEFT/RIGHT/FULL/CROSS),
-on: {{"left": "tablo.sütun", "right": "tablo.sütun"}}.
-aggregates: op (count/count_distinct/sum/avg/min/max/group_array/stddev_samp), column, as.
+joins: [{{"table": "şemadaki_tablo", "alias": "j", "type": "INNER",
+"on": {{"left": "ana.sütun", "right": "j.sütun"}}}}].
+JOIN türleri INNER/LEFT/RIGHT/FULL/CROSS olabilir.
+aggregates: [{{"op": "count", "as": "total"}}] biçiminde NESNE LİSTESİ.
+Her nesnede op (count/count_distinct/sum/avg/min/max/group_array/stddev_samp), column, as.
 count(*) için column alanını atla. Sütun adları SQL fonksiyonu içeremez.
-filters: column, op (EQ/NEQ/GT/GTE/LT/LTE/LIKE/ILIKE/IN/NOT_IN/BETWEEN/HAS/
-HAS_ANY/HAS_ALL/IS_NULL/IS_NOT_NULL), value. NULL için IS_NULL/IS_NOT_NULL kullan.
+filters: [{{"column": "şemadaki_sütun", "op": "EQ", "value": "değer"}}].
+Filtre op değerleri EQ/NEQ/GT/GTE/LT/LTE/LIKE/ILIKE/IN/NOT_IN/BETWEEN/HAS/
+HAS_ANY/HAS_ALL/IS_NULL/IS_NOT_NULL olabilir. NULL için IS_NULL/IS_NOT_NULL kullan.
 IN/NOT_IN value dizi veya tek sütun döndüren alt sorgu planı olabilir.
 array_joins: [{{"column": "dizi_sütunu", "as": "etiket"}}] (yalnızca ClickHouse).
 time_bucket: {{"column": "tarih_sütunu", "grain": "day|week|month", "as": "period"}}.
 Zaman toplamasında group_by içine period ekle, tarihi artan sırala.
 order_by: [{{"column": "sütun_veya_takma_ad", "dir": "asc|desc"}}].
 limit: 1–1000 arasında tamsayı. Gerekmeyen alanları atla.
+columns, joins, aggregates, filters, group_by, order_by ve array_joins alanları
+her zaman JSON dizisi olmalı. Tek öğe için bile köşeli parantez kullan.
+Bu alanlarda null, metin veya tek nesne döndürme; boşsa [] kullan veya alanı atla.
+Yukarıdaki yer tutucu tablo/sütun adlarını kullanma; gerçek şemadan seç.
 Kök neden dağılımlarında mevcut kategori/ürün sütunlarına öncelik ver.
 JOIN ile satır çoğalması mümkünse uygun benzersiz anahtarla count_distinct kullan.
 """
