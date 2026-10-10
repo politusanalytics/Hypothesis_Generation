@@ -1,0 +1,21 @@
+name: hypothesis-local
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8123:8123"
+    environment:
+      CLICKHOUSE_DB: brand_analytics
+      CLICKHOUSE_USER: dataset_importer
+      CLICKHOUSE_PASSWORD: ${LOCAL_CLICKHOUSE_PASSWORD:?Run local_clickhouse.py prepare first}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./.local-clickhouse/analyst.xml:/etc/clickhouse-server/users.d/analyst.xml:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+volumes:
+  clickhouse_data:

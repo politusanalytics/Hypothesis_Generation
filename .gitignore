@@ -22,3 +22,6 @@ logs/*.log
 # Generated local demonstration data
 data/*.db
 .pytest_cache/
+
+# Local ClickHouse credentials, converted source data and generated Cloud settings
+.local-clickhouse/

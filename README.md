@@ -208,6 +208,12 @@ dalına gönderin; gerekirse uygulamayı [Reboot](https://docs.streamlit.io/depl
 ile yeniden başlatın. Cloud'daki mevcut kullanıcı adı, parola ve veritabanı ayarlarını
 koruyun; örnek secrets dosyasındaki boş değerlerle değiştirmeyin.
 
+## CSV dosyalarıyla yerel ClickHouse kurmak
+
+CSV dönüştürme, Docker ile ClickHouse başlatma, veri aktarımı ve ngrok üzerinden
+Streamlit Cloud bağlantısı için [adım adım rehber](docs/LOCAL_CLICKHOUSE.md).
+Gerçek veriler ve üretilen parolalar `.local-clickhouse/` içinde tutulur; Git'e eklenmez.
+
 ## Cloud'da veritabanı başlatma hatası
 
 Cloud Secrets içinde ClickHouse için `DATABASE_BACKEND = "clickhouse"` seçin.
