@@ -11,7 +11,7 @@ veri kapsamı ve eksik gözlemleri açıkla. Şikayet artışı ürün arızası
 ancak tek başına böyle bir nedenselliği kanıtlamaz. Sıfır sonuç verinin bulunmaması
 anlamına gelebilir. Hipotez kararı yalnızca hesaplanmış test sonucundan alınır;
 p-değeri hipotezin doğru olma olasılığı değildir. Destek yüzdesi uydurma.
-Doğrudan ölçümü [Ölçüldü], yorumu [Makul], kanıtsız iddiayı [Desteklenmeyen] etiketle.
+Ölçümü ve öneriyi sade cümlelerle ayır; desteklenmeyen iddiaları yazma.
 """
 
 

@@ -36,15 +36,12 @@ Sorunun doğrudan hedeflenebilir bir odağı olup olmadığını değerlendir.
 YALNIZCA AŞAĞIDAKİ JSON FORMATINDA YANIT VER:
 {{
   "needs_clarification": true,
-  "clarification_message": "Analizi daha isabetli hale getirmek için hangi ürün veya odak alanına yoğunlaşmak istersiniz?",
-  "options": [
-    {{"label": "☕ Kahve Makineleri", "context": "Kahve Makinesi ve Türk Kahvesi ürünlerine odaklan"}},
-    {{"label": "🧹 Elektrik Süpürgeleri", "context": "Elektrik Süpürgesi kategorisine odaklan"}},
-    {{"label": "📦 Servis & Teslimat Süreçleri", "context": "Satış sonrası servis ve teslimat şikayetlerine odaklan"}},
-    {{"label": "🌐 Tüm Portföyü Kapsa", "context": "Tüm ürün grupları genelinde analiz yap"}}
-  ]
+  "clarification_message": "Hangi tarih aralığını veya kitleyi incelemek istersiniz?",
+  "options": []
 }}
-Soru zaten netse 'needs_clarification': false ve 'options': [] döndür.\
+Soru zaten netse 'needs_clarification': false ve 'options': [] döndür.
+Örnek ürün, marka veya sektör önerme. Şema kategori değerlerinin varlığını kanıtlamaz.
+Kullanıcı belirtmediyse ürün/marka filtresi ekleme.\
 """
 
 

@@ -46,7 +46,10 @@ JOIN'i satır çoğaltabilir. Kullanıcı sayısı için `count_distinct(id)` ku
 Tahmin tablosunda bir tweet farklı task/scope kayıtları içerebilir; tweet hacmi
 için `count_distinct(tweet_id)` ve uygun task filtresini kullanın. Demografik
 ortalama/istatistiksel testlerde tekilleştirme kuralı belirlenmeden JOIN sonuçlarını
-bağımsız gözlem gibi kullanmayın. Tekrarlar otomatik silinmez.
+bağımsız gözlem gibi kullanmayın. Tekrarlar otomatik silinmez. Yeni uygulama sorgu
+sırasında kullanıcıları tekilleştirir, çelişkili demografiyi bilinmiyor kabul eder ve
+paylaşımları benzersiz sayar. Kaynak tablolar değişmez. Beş modun güncel kullanım ve
+yayınlama adımları: [Streamlit güncelleme rehberi](STREAMLIT_UPDATE.md).
 
 ## 3. ClickHouse'u başlatın
 
@@ -126,9 +129,9 @@ Dosyadaki `CLICKHOUSE_TABLES = "users,tweet_predictions"` ayarı önemlidir.
 
 Kaydedin, uygulamayı yeniden başlatın ve Veri Analiz Modu'nda şu soruları deneyin:
 
-- Tahmin kayıtlarının task_name alanına göre dağılımı nedir?
-- Kaç benzersiz kullanıcı id'si var?
-- Aylara göre benzersiz tweet sayısı nedir?
+- **Neyi inceleyelim? → Duygular → Analizi göster**.
+- **Nasıl karşılaştıralım? → Yaş grubuna göre → Analizi göster**.
+- **Kendi analiz sorumu yazmak istiyorum** alanında: Yaş gruplarının baskın duyguları neler?
 
 ## Çalışma koşulları ve dosyalar
 

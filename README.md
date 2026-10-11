@@ -1,247 +1,148 @@
-# Pazarlama Veri Analizi ve İstatistik Motoru
+# Pazarlama İçgörüleri
 
-Streamlit arayüzü, şemaya göre doğal dil sorgulama, istatistiksel hipotez testleri ve
-zaman serisi tahmini sunar. ClickHouse ve salt okunur SQLite profilleri desteklenir.
+Beş mod, aynı salt okunur veri katmanını kullanır. Ana ekranda iş soruları ve sade
+Türkçe sonuçlar gösterilir; SQL, şema, ayrıntılı tablolar ve isteğe bağlı grafikler
+açılır bölümlerdedir.
 
-## Modlar
+- **Otonom İçgörü:** Konu, duygu ve tüketici yolculuğundan ölçülmüş bulgulara dayanan
+  tek paragraflık strateji özeti. Grafik varsayılan olarak kapalıdır.
+- **Manuel Soru:** Doğal dilde soru ve sade yanıt. Sorular varsayılan olarak bağımsızdır;
+  takip sorusunda “Önceki soruya devam et” seçilir. Ürün/marka varsayılmaz.
+- **Hipotez Doğrulama:** Başlık ve iki kitle seçilir. Her kişi bir kez sayılarak
+  Fisher kesin oran testi uygulanır. Teknik sonuçlar açılır bölümde bulunur.
+- **Tahminleme:** Paylaşım tarihi otomatik seçilir; adet modeli, geçmiş dönem
+  sınaması, basit tahmin karşılaştırması ve %95 tahmin aralığı hesaplanır.
+- **Veri Analiz (ClickHouse):** Duygu, konu, yolculuk veya marka dağılımları;
+  genel, cinsiyet veya yaş kırılımı. İsteğe bağlı doğal dil soruları.
 
-- Otonom İçgörü: Gerçek şemadan araştırma soruları üretir ve sorgu bulgularını özetler.
-- Manuel Soru: Konuşma bağlamını koruyarak doğal dil sorularını sorgular.
-- Hipotez Doğrulama: Kullanıcının seçtiği iki grup için Welch ortalama farkı veya
-  Fisher kesin oran farkı testi hesaplar; p-değeri, etki, güven aralığı ve H0 kararı gösterir.
-- Tahminleme: Gün/hafta/ay bazında count/sum/avg toplaması, yerel doğrusal trend
-  modeli, geçmiş dönem sınaması, MAE/RMSE, basit tahmin karşılaştırması ve %95 tahmin aralığı.
-- Veri Analiz (ClickHouse): Yalnızca ClickHouse sorgularını SQL, tablo ve CSV olarak sunar.
+## Mevcut Streamlit sitesini güncelleme
 
-Sorguların tamamı aynı doğrulayıcıdan geçer. Bilinmeyen tablo/sütun, ham JOIN koşulu,
-geçersiz filtre, desteklenmeyen alan ve uygunsuz limit reddedilir. ClickHouse şeması
-DESCRIBE TABLE ile okunur; örnek kayıtlar sorgu modeline gönderilmez. Eski sınırsız
-SQL-agent ve kullanılmayan başlangıç RAG bağlantısı kaldırıldı. Veri kaynakları SQL'dir.
-Doğal dil modlarında soru, şema ve (sentez için) sorgu sonuçları OpenAI'ye iletilir;
-istatistik/tahmin modlarında veriler yerelde hesaplanır.
+GitHub `dev` dalına push, Docker/ngrok, Cloud Secrets, beş modu deneme ve
+hata giderme için [adım adım güncelleme rehberini](docs/STREAMLIT_UPDATE.md) izleyin.
+İlk CSV aktarımı ve Docker kurulumu: [yerel ClickHouse rehberi](docs/LOCAL_CLICKHOUSE.md).
 
-## Windows'ta adım adım yerel kurulum
+## Veri anlamı
 
-CPython **3.12, 64 bit** kullanın. Projedeki requirements.txt bu sürümle Windows'ta
-kurulup test edilmiş doğrudan ve geçişli bağımlılıkları sabitler. requirements.in
-bilinçli paket güncellemeleri için doğrudan bağımlılık listesidir.
+Bu CSV'lerde kullanıcı verisi `users`, sınıflandırmalar `tweet_predictions`
+tablosundadır. Kategori alanı liste kodlamalı bir metindir ve `task_name` ile
+hangi analiz türüne ait olduğu anlaşılır. Yeni ortak katman:
 
-### 1. PowerShell'de proje klasörüne geçin
+- Metin/JSON/ClickHouse dizi etiketlerini ayrı değerlere açar; konu anahtar kelimelerini
+  başlıktan ayırır. Sektör metadata'sını duygu/konu diye saymaz.
+- Konuların aylık, çeyreklik, yarıyıllık ve yıllık kopyalarından tek aile seçer;
+  mevcutsa aylık aileyi kullanır.
+- Her paylaşımı benzersiz sayar. Kullanıcıları JOIN öncesi tekilleştirir;
+  aynı kullanıcı için çelişkili demografiyi bilinmiyor kabul eder.
+- Gelecek tarihli ve çelişkili tarihli paylaşımları kapsamdan çıkarır.
+- Kaynak tabloları değiştirmez. İş görünümleri her SELECT içinde CTE olarak hazırlanır;
+  yeni tablo oluşturma veya yönetici izni gerekmez.
+
+Paylaşım bazındaki etiket oranının paydası, aynı analiz türünde ve kitlede en az bir
+etiketi olan benzersiz paylaşımlardır. Bir paylaşımın birden fazla etiketi olabilir;
+oranlar toplamı %100'ü aşabilir. Hipotez testinde payda aynı kapsamda etiketli
+paylaşımı olan benzersiz **kişiler**, sonuç ise seçilen etiketi en az bir
+paylaşımında taşıyan kişidir. Kurumlar ve bilinmeyen/çelişkili seçili demografi dışlanır.
+
+Bu dosyalarda satış veya etkileşim ölçümü ve ürün alanı bulunmuyor.
+Purchase, gerçekleşmiş satış adedi değil, paylaşımın sınıflandırma etiketidir.
+Örnek marka/sektör adlarından gerçek ürün veya sektör çıkarılmaz. Eski sürümdeki
+gibi hacimden satış, huni kaybı veya nedensellik iddiası üretilmez.
+
+## Yerel kurulum ve test
+
+CPython **3.12, 64 bit** kullanın. `requirements.txt` doğrudan ve geçişli
+bağımlılıkları sabitler; mevcut sanal ortam varsa yeniden oluşturmayın.
 
 ```powershell
 cd C:\Users\Seker1\Desktop\Hypothesis_Generation
-```
-
-### 2. Sanal ortamı oluşturun ve paketleri yükleyin
-
-```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-Bu çalışma sırasında `.venv` zaten oluşturuldu. Aynı bilgisayarda mevcut ortamı
-kullanıyorsanız ilk komutu atlayabilirsiniz. `py -3.12` bulunamıyorsa standart
-Python 3.12 kurulumunu tamamlayın veya kurulu Python 3.12 yürütülebilirinin tam yolunu
-kullanın. MSYS Python 3.14 bu projenin doğrulanan ortamı değildir.
-Aktivasyon şart değildir; komutlarda sanal ortamın Python'u doğrudan kullanılır.
-
-### 3. Sentetik demo verisini oluşturun
+Yerel SQLite demosu için:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\create_demo.py
 ```
 
-`data/demo_analytics.db` oluşur. Bu çalışma sırasında dosya zaten oluşturuldu.
-Dosya varsa script üzerine yazmaz; mevcut dosyayı kullanın veya
-`--output data/demo_2.db` ile yeni bir dosya üretin. Mevcut
-`insight_generation_bot.db` değiştirilmez. Demo verileri sentetiktir.
+Mevcut `.streamlit/secrets.toml` dosyasının üzerine yazmayın. Dosya yoksa
+`.streamlit/secrets.toml.example` dosyasını kopyalayıp ayarları düzenleyin.
+SQLite demosu: `DATABASE_BACKEND = "sqlite"`,
+`SQLITE_DB_PATH = "data/demo_analytics.db"`. Bu demo tüketici yolculuğu etiketi
+içermediğinden sadece mevcut analiz türleri sunulur.
 
-### 4. Yerel ayar dosyasını hazırlayın
-
-Mevcut `.streamlit/secrets.toml` dosyanız varsa üzerine kopyalamayın; ilgili alanları
-o dosyada düzenleyin. Dosya yoksa:
-
-```powershell
-Copy-Item .streamlit\secrets.toml.example .streamlit\secrets.toml
-```
-
-Demo profili için:
-
-```toml
-DATABASE_BACKEND = "sqlite"
-SQLITE_DB_PATH = "data/demo_analytics.db"
-OPENAI_API_KEY = ""
-CLICKHOUSE_HOST = ""
-```
-
-Hipotez ve tahmin modları API anahtarı olmadan çalışır. Otonom, manuel ve ClickHouse
-veri analiz modları için `OPENAI_API_KEY` değerini doldurun. secrets.toml Git tarafından
-yok sayılır. Ayarlar ortam değişkenleriyle de verilebilir; secrets.toml önceliklidir.
-
-### 5. Bağlantıyı ve bütün testleri çalıştırın
+ClickHouse için `DATABASE_BACKEND = "clickhouse"` seçin; mevcut bağlantı
+ayarlarınızı ve `OPENAI_API_KEY` değerini koruyun. CSV veri setinde
+`CLICKHOUSE_TABLES = "users,tweet_predictions"` kullanın. Cloud'da yerel
+SQLite dosyanız bulunmaz; `localhost` ise Cloud sunucusunu ifade eder.
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\check_connection.py
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
-
-Testler API anahtarı ve gerçek ClickHouse bağlantısı gerektirmez. SQL güvenliği,
-şema doğrulaması, ClickHouse hata durumları, log gizliliği, istatistiksel sonuçlar,
-zaman serisi ve Streamlit arayüz akışları denetlenir. Testlerde kişinin gerçek
-bağlantı ayarları kullanılmaz. `ScriptRunContext` uyarıları Streamlit test ortamında
-beklenir; başarı ölçütü testlerin sonunda `OK` yazmasıdır.
-
-### 6. Uygulamayı başlatın
-
-```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests
 .\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1
 ```
 
-Tarayıcıda http://localhost:8501 adresini açın. Durdurmak için terminalde Ctrl+C.
-Ayarları değiştirdiğinizde uygulamayı durdurup yeniden başlatın; bağlantılar önbelleğe alınır.
+Tarayıcı: http://localhost:8501. Durdurma: Ctrl+C. Ayarları değiştirdikten sonra
+yerel uygulamayı yeniden başlatın. Streamlit Secrets ortam değişkenlerinden önceliklidir.
+Testler gerçek API/ClickHouse gerektirmez. Streamlit testindeki
+`missing ScriptRunContext` uyarısı beklenir; sonda `OK` yazmalı.
 
-### 7. Demo hipotez testini deneyin
-
-1. Sol menüden **Hipotez Doğrulama Modu** seçin.
-2. Tablo: `tweets`; grup sütunu: `issue`.
-3. A grubu: `delivery`; B grubu: `service`.
-4. Test: **Ortalama farkı — Welch**; metrik: `engagement`; α: `0.05`.
-5. Demo verisinde her kaydın ayrı kullanıcıya ait olduğunu bilerek bağımsızlık kutusunu işaretleyin.
-6. **Hipotezi Test Et** düğmesine basın. p-değeri, ortalama farkı, güven aralığı ve SQL gösterilir.
-7. Oran testi için **Oran farkı — Fisher**, metrik `sentiment`, başarı değeri `positive` seçin.
-
-Bu testler iki seçili grup arasındaki ölçülebilir farkı sınar. Alternatif nedensel
-H2 açıklamalarını veri olmadan doğrulamaz. p-değeri hipotezin doğru olma yüzdesi değildir;
-H0'ın reddedilememesi eşitlik kanıtı değildir. Tekrarlanan kişi/olay gözlemleri veya
-zamansal olarak bağımlı kayıtlar için bu bağımsız iki grup testleri uygun olmayabilir.
-Birden çok test yürütüldüğünde çoklu karşılaştırma düzeltmesi bu sürümde otomatik yapılmaz.
-
-### 8. Demo tahminini deneyin
-
-1. **Tahminleme (Predictive) Modu** seçin.
-2. Tablo `tweets`, tarih sütunu `created_at`, dönem `month`, metrik `count`.
-3. Başlangıç `2024-01-01`, bitiş (hariç) `2026-07-01`; ufuk `6` dönem.
-4. **Tahmin Üret** düğmesine basın.
-5. MAE/RMSE, son-değer tahminiyle karşılaştırma, grafik ve %95 tahmin aralığını inceleyin.
-
-En az 16 tam dönem gerekir. Başlangıç/bitişteki ve halen açık olan dönemler dışlanır.
-Eksik dönemler varsayılan olarak hata verir. Yalnızca count/sum ve tam veri kapsamı
-onayıyla sıfır doldurulabilir; ortalamada doldurulmaz. Son dönemler eğitim dışında
-sınanır; final model tüm geçmişle yeniden eğitilir. Modelin mevsimsellik/dış etken
-bileşeni yoktur. Tahmin aralıkları model varsayımlarına dayanır; negatif adet tahmini
-veya basit modeli geçemeyen hata, modelin uygun olmadığını gösterebilir.
-
-## Gerçek ClickHouse ile çalıştırma
-
-secrets.toml içinde bağlantı ayarlarını doldurun:
-
-```toml
-DATABASE_BACKEND = "clickhouse"
-OPENAI_API_KEY = "anahtarınız"
-CLICKHOUSE_HOST = "sunucu-adresi"
-CLICKHOUSE_PORT = "8123"
-CLICKHOUSE_USERNAME = "okuma_kullanicisi"
-CLICKHOUSE_PASSWORD = "parolanız"
-CLICKHOUSE_DB = "veritabani"
-CLICKHOUSE_SECURE = "false"
-CLICKHOUSE_TABLES = "tweet_predictions,tweets,users,user_factors"
-```
-
-TLS için `CLICKHOUSE_SECURE = "true"` ve sunucunuzun TLS HTTP portunu (çoğunlukla
-8443) kullanın. Port 443 kullanıldığında HTTPS otomatik etkinleştirilir.
-`CLICKHOUSE_VERIFY` varsayılan olarak `"true"` değerindedir; mevcut bağlantı
-ayarlarında açıkça verilen değer ortak bağlantı koduna iletilir.
-HOST alanına `https://` eklemeyin. İzin listesinde yalnızca erişilebilir
-tabloları/view'ları belirtin; varsayılan dört tablonun tamamının bulunması gerekir.
+Yerel Docker verisinin iş anlamı ve orijinal CSV ile bağımsız sayım karşılaştırması:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\check_connection.py --clickhouse
-.\.venv\Scripts\python.exe -m streamlit run app.py --server.address 127.0.0.1
+.\.venv\Scripts\python.exe scripts\check_marketing_data.py --local --compare-csv-dir C:\Users\Seker1\Downloads
 ```
 
-**Veri Analiz Modu (ClickHouse)** seçip “tweets tablosunda kaç kayıt var?” gibi
-bir sorgu deneyin. Mod, `DATABASE_BACKEND=sqlite` olsa bile ClickHouse ister;
-bağlantı hatasında SQLite'a geçmez. Diğer modlar da ClickHouse profili seçildiğinde
-bağlantı hatasında durur. Hipotez için grup ve metrik aynı tabloda bulunmalıdır;
-gerekirse sunucuda bağımsız gözlem düzeyinde bir analiz view'ı hazırlayıp izin listesine ekleyin.
+`--local` olmadan bu betik uygulamanın Secrets ayarındaki ClickHouse'a bağlanır.
+Sadece okur; kayıt örneği veya parola yazdırmaz. CSV yolu isteğe bağlıdır.
 
-ClickHouse kullanıcısına sunucuda yalnızca SELECT/şema okuma yetkisi verin ve profil
-üzerinden süre/bellek limitlerini tanımlayın. Uygulama sorguya `readonly=1`,
-`max_execution_time=30`, 1000 sonuç satırı ve 10 MB sonuç sınırı gönderir; sürücü
-sunucuda değiştirilemeyen ayarları atlayabilir. Canlı bağlantının doğrulanması için
-`check_connection.py --clickhouse` çıktısı gerekir; çevrimdışı testler bu doğrulamayı yapmaz.
+## Model ve veri kapsamı
 
-## Log gizliliği
+Hazır dağılımlar, hesaplanmış strateji özeti, sık kullanılan açık sorular,
+hipotez testi ve tahmin API anahtarı olmadan çalışır. Özel doğal dil sorguları ve
+model tarafından yazılan strateji için `OPENAI_API_KEY` gerekir.
+Otonom özette model hatası olursa hesaplanmış özet gösterilir.
 
-Yeni loglar yalnızca olay, rastgele sorgu kimliği, süre, durum ve sonuç satır sayısını
-tutar. Kullanıcı sorusu, SQL, JSON filtreleri, kayıt örnekleri ve hata mesajı/traceback
-kaydedilmez. Ek hassas alanlar maskelenir; e-posta, telefon, anahtar ve URI parolası
-kalıpları mesajlarda filtrelenir. Aynı filtre yerel dosya, konsol ve Graylog'a uygulanır.
-Önceden oluşmuş uygulama loglarını yerinde maskelemek için uygulamayı durdurup:
+Hipotez kararı Python'da Fisher testiyle hesaplanır. p-değeri hipotezin doğru olma
+yüzdesi değildir; H0'ın reddedilememesi eşitlik kanıtı değildir. Nedensellik
+test edilmez. Bağımsız kişileri temsil etmeyen örneklerde bu test uygun değildir.
+Çoklu karşılaştırma düzeltmesi otomatik uygulanmaz. Welch ve genel istatistik
+yardımcıları kodda korunur; sade ekranda bu CSV'ye uygun kişi bazlı oran testi sunulur.
 
-```powershell
-.\.venv\Scripts\python.exe scripts\mask_logs.py
-```
+Tahmin için en az 16 tam dönem gerekir. İlk/son kısmi ve halen açık dönemler dışlanır.
+Eksik dönemler varsayılan olarak tahmini durdurur; yalnızca kesintisiz toplama
+onayıyla sıfır doldurulur. Adetler log(1+adet) ölçeğinde yerel doğrusal trend
+modeliyle hesaplanır; geri dönüştürülmüş merkezi tahmin ve aralıklar negatif olamaz.
+Son dönemler eğitime alınmadan sınanır; final model tüm geçmişle eğitilir.
+L-BFGS yakınsamazsa en fazla bir Powell denemesi yapılır, başarısız model sunulmaz.
+Mevsimsellik veya dış etken yoktur. Model basit son-değer tahminini geçemezse uyarı
+gösterilir; zayıf modelin sayı/grafiği varsayılan olarak kapalı tutulur ve yalnızca
+kullanıcı isterse açılır. Tahmin aralığı garanti değildir. Sıfır doldurulmuş kesintili bu örnek
+veriden güçlü ticari tahmin beklentisi çıkarılmamalıdır.
 
-Bu işlem `logs/app.log*` dosyalarında eski mesaj ve hassas alanları geri alınamayacak
-şekilde maskeler. Eski Graylog kayıtları sunucuda ayrıca yönetilmelidir.
+## Sorgu güvenliği ve gizlilik
 
-## Streamlit Cloud'da import sırasında IndentationError
+Bütün sorgular ortak şema/plan doğrulamasından geçer. Bilinmeyen tablo/sütun,
+ham JOIN koşulu, geçersiz filtre ve uygunsuz limit reddedilir. Etiket sorgularında
+her etiket tablosuna ayrı analiz türü filtresi ve benzersiz sayım zorunludur.
+OpenAI'ye ham SQL çalıştırma yetkisi verilmez. Sonuçlar en fazla 1000 satır,
+ClickHouse sorguları en fazla 30 saniyedir. Kaynak hesap yalnız SELECT yetkilidir.
 
-`app.py` içindeki `from agent import ...` satırında gösterilen hata, `agent.py`
-dosyasındaki çözümlenmemiş Git birleştirme işaretlerinden kaynaklanabilir.
-Çakışma işaretlerini silmekle birlikte iki kod sürümünden tutarlı bir akış seçilmelidir;
-yalnızca işaretleri silip iki bağlantı akışını birlikte bırakmayın.
-Uygulama ortak `database.connect_clickhouse` bağlantısını kullanır.
+Model kullanılan akışlarda soru, şema ve etiket envanteri OpenAI'ye iletilir;
+özet için toplulaştırılmış bulgular, özel sorguların özetinde dönen sonuçlar
+gönderilebilir. Uygulama logları soru, SQL, filtre değeri, kayıt örneği ve ham hata
+kaydetmez; yalnız sorgu kimliği, süre, durum ve güvenli metadata kaydeder.
+Bu maskeleme ClickHouse veya ngrok sunucu loglarını ayrıca yönetmez.
+`.streamlit/secrets.toml`, `.local-clickhouse/`, yerel veriler ve loglar Git'e eklenmez.
 
-GitHub'a yüklemeden önce:
+Eski uygulama loglarını maskelemek için uygulamayı durdurup
+`.\.venv\Scripts\python.exe scripts\mask_logs.py` çalıştırabilirsiniz.
+Bu işlem mevcut log içeriğini geri alınamayacak şekilde maskeler.
 
-```powershell
-.\.venv\Scripts\python.exe -m py_compile agent.py database.py app.py
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-```
+## Kaynaklar
 
-`test_repository_integrity.py` tüm Python kaynaklarının sözdizimini ve örnek
-secrets dosyasının TOML biçimini denetler. Düzeltmeyi Streamlit'in izlediği GitHub
-dalına gönderin; gerekirse uygulamayı [Reboot](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/reboot-your-app)
-ile yeniden başlatın. Cloud'daki mevcut kullanıcı adı, parola ve veritabanı ayarlarını
-koruyun; örnek secrets dosyasındaki boş değerlerle değiştirmeyin.
-
-## CSV dosyalarıyla yerel ClickHouse kurmak
-
-CSV dönüştürme, Docker ile ClickHouse başlatma, veri aktarımı ve ngrok üzerinden
-Streamlit Cloud bağlantısı için [adım adım rehber](docs/LOCAL_CLICKHOUSE.md).
-Gerçek veriler ve üretilen parolalar `.local-clickhouse/` içinde tutulur; Git'e eklenmez.
-
-## Cloud'da veritabanı başlatma hatası
-
-Cloud Secrets içinde ClickHouse için `DATABASE_BACKEND = "clickhouse"` seçin.
-Örnek secrets yerel SQLite demosunu seçer; `data/demo_analytics.db` Git'e dahil
-edilmediğinden bu dosya Cloud'da kendiliğinden bulunmaz. Mevcut bağlantı parolanızı
-ve anahtarınızı koruyun. `CLICKHOUSE_DB` gerçek veritabanınız; `CLICKHOUSE_TABLES`
-bu veritabanında bulunan ve kullanıcıya okuma izni verilen tablo adları olmalıdır.
-Varsayılan dört tablodan biri bile bulunamazsa şema yüklenmesi durur.
-
-Başlangıç mesajları bağlantı ile şema okuma hatalarını ayırır. ClickHouse kod 60
-tablonun, 81 veritabanının bulunamadığını; 516 kimlik doğrulamasının başarısız
-olduğunu belirtir. Ham sürücü hataları, URL, parola, SQL veya veri örneği gösterilmez.
-Diğer bağlantı hatalarında host/HTTP(S) port/TLS ve ağ erişimini kontrol edin;
-Cloud'daki `localhost` kendi bilgisayarınıza bağlanmaz.
-
-OpenAI çağrısı yapmadan bağlantıyı ve tüm yapılandırılmış tabloları kontrol etmek için:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\check_connection.py --clickhouse
-```
-
-Yerelde çalışan bağlantı Cloud ağından erişimin de çalıştığını kanıtlamaz.
-GitHub'a düzeltmeyi gönderdikten sonra Cloud Secrets ayarlarını kaydedin ve uygulamayı
-yeniden başlatın; ekranda görünen güvenli teşhis mesajına göre ayarları düzeltin.
-
-## Kullanılan hesaplama yöntemleri
-
-- [SciPy Welch testi](https://docs.scipy.org/doc/scipy-1.16.2/reference/generated/scipy.stats.ttest_ind_from_stats.html)
-- [SciPy Fisher kesin testi](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.fisher_exact.html)
-- [Newcombe oran farkı güven aralığı](https://www.statsmodels.org/stable/generated/statsmodels.stats.proportion.confint_proportions_2indep.html)
+- [Streamlit uygulama güncelleme](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/edit-your-app)
+- [Streamlit Secrets ayarları](https://docs.streamlit.io/deploy/streamlit-community-cloud/manage-your-app/app-settings)
+- [Fisher kesin testi](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.fisher_exact.html)
 - [Durum uzayı zaman serisi modeli](https://www.statsmodels.org/stable/generated/statsmodels.tsa.statespace.structural.UnobservedComponents.html)

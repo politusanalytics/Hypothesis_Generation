@@ -26,6 +26,9 @@ class ClickHouseAnalysisEngine:
         plan = validate_query_plan(self.planner.generate_query_json(question), dialect="clickhouse",
                                    catalog=self.catalog, allowed_tables=TABLES if self.catalog is None else None,
                                    default_limit=1000)
+        check = getattr(self.planner.db, "validate_plan", None)
+        if callable(check):
+            check(plan)
         sql = compile_json_to_sql(plan, dialect="clickhouse")
         try:
             result = self.client.query(sql, settings=QUERY_SETTINGS)
@@ -45,6 +48,8 @@ def get_analysis_engine(model_name, get_config):
     from database import connect_clickhouse
     from agents.query_agent import QueryAgent
     db = connect_clickhouse(get_config)
+    from marketing_data import marketing_database
+    db = marketing_database(db)
     planner = QueryAgent(model_name=model_name, dialect="clickhouse", db=db,
                          schema=db.get_table_info(), catalog=db.catalog,
                          api_key=get_config("OPENAI_API_KEY") or None)

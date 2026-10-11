@@ -4,6 +4,7 @@ import math
 import re
 from pathlib import Path
 import sqlite3
+import time
 from contextlib import closing
 
 CORE_TABLES = ("tweet_predictions", "tweets", "users", "user_factors")
@@ -69,13 +70,15 @@ class SQLiteDatabase:
         connection = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)
         connection.execute("PRAGMA query_only=ON")
         connection.create_aggregate("stddev_samp", 1, _SampleStddev)
-        # Protect local interactive queries too: roughly 1 million VM instructions.
+        # Shared business views perform deduplication and several grouped scans.
+        # Bound both elapsed time and VM work without rejecting the local demo.
         calls = 0
+        started = time.monotonic()
 
         def budget():
             nonlocal calls
             calls += 1
-            return int(calls > 1000)
+            return int(calls > 10_000 or time.monotonic() - started > 3)
 
         connection.set_progress_handler(budget, 1000)
         return connection

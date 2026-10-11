@@ -29,14 +29,6 @@ logger = logging.getLogger(__name__)
 
 CLICKHOUSE_CORE_TABLES = ["tweet_predictions", "tweets", "users", "user_factors"]
 
-# --- 1. API ANAHTARLARI (Streamlit Secrets & Ortam Değişkenleri ile Uyumlu) ---
-try:
-    if hasattr(st, "secrets") and "OPENAI_API_KEY" in st.secrets:
-        os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-except Exception:
-    pass
-
-
 from agents.prompts.query_prompts import QUERY_GENERATOR_SYSTEM_PROMPT
 
 # Geriye dönük uyumluluk için alias
@@ -172,13 +164,19 @@ class QueryAgent:
                 raise ValueError(str(query_json["error"]))
             try:
                 query_json = _normalize_generated_aggregates(query_json)
-                return validate_query_plan(query_json, dialect=self.dialect,
-                                           catalog=self.catalog, default_limit=1000)
+                return self._validated_plan(query_json)
             except ValueError as error:
                 last_error = str(error)
             except TypeError:
                 last_error = "Sorgu planındaki alan türleri geçersiz."
         raise ValueError("Geçerli sorgu planı üretilemedi. " + last_error) from None
+
+    def _validated_plan(self, plan):
+        plan = validate_query_plan(plan, dialect=self.dialect, catalog=self.catalog, default_limit=1000)
+        semantic_check = getattr(self.db, "validate_plan", None)
+        if callable(semantic_check):
+            semantic_check(plan)
+        return plan
 
     def execute_nl_query(self, question: str, dialect: Optional[str] = None) -> dict[str, Any]:
         """Doğal dil sorusunu JSON ve SQL derleme adımlarından geçirip veritabanında çalıştırır."""
@@ -205,8 +203,7 @@ class QueryAgent:
         try:
             # Ensure lazy DB/catalog initialization precedes schema validation.
             self.db
-            query_json = validate_query_plan(query_json, dialect=active_dialect,
-                                              catalog=self.catalog, default_limit=1000)
+            query_json = self._validated_plan(query_json)
             sql = compile_json_to_sql(query_json, dialect=active_dialect)
         except Exception as e:
             duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
@@ -250,7 +247,7 @@ class QueryAgent:
     def execute_plan(self, plan):
         """Execute a user-configured statistical plan through the same guardrails."""
         self.db
-        plan = validate_query_plan(plan, dialect=self.dialect, catalog=self.catalog, default_limit=1000)
+        plan = self._validated_plan(plan)
         sql = compile_json_to_sql(plan, dialect=self.dialect)
         start = time.perf_counter()
         try:

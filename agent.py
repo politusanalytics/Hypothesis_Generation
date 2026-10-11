@@ -86,6 +86,8 @@ class ValidatedExecutor:
 
 def get_hybrid_agent(db_uri=None, fast_model="gpt-4o-mini", reasoning_model="gpt-4o"):
     db, active_uri, dialect = get_database_connection(db_uri)
+    from marketing_data import marketing_database
+    db = marketing_database(db)
     key = get_secret("OPENAI_API_KEY")
     llm = ChatOpenAI(model=reasoning_model, temperature=0, api_key=key) if key else None
     query_agent = QueryAgent(db_uri=active_uri, model_name=fast_model, dialect=dialect,

@@ -36,43 +36,57 @@ def _fit(series):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=UserWarning)
         warnings.simplefilter("ignore", category=SparseEfficiencyWarning)
-        result = UnobservedComponents(series, level="local linear trend").fit(disp=False, maxiter=300)
+        model = UnobservedComponents(series, level="local linear trend")
+        result = model.fit(disp=False, maxiter=300)
+        if not result.mle_retvals.get("converged", True):
+            # Small log-count variances often put L-BFGS on a boundary. Use a
+            # bounded second optimizer; never present an unconverged result.
+            result = model.fit(method="powell", disp=False, maxiter=300)
     if not result.mle_retvals.get("converged", True):
         raise ValueError("Zaman serisi modeli yakınsamadı; kapsamı veya dönem kırılımını değiştirin.")
     return result
 
 
-def forecast_series(series, horizon=6, confidence=0.95):
+def forecast_series(series, horizon=6, confidence=0.95, nonnegative=False):
     if type(horizon) is not int or not 1 <= horizon <= 60 or not 0.5 < confidence < 1:
         raise ValueError("Ufuk 1–60 dönem, güven düzeyi 0.5–1 aralığında olmalı.")
     if len(series) < 16 or series.isna().any() or not np.isfinite(series).all():
         raise ValueError("Tahmin için en az 16 eksiksiz, sonlu dönem gerekli.")
     if series.index.freq is None or not series.index.is_monotonic_increasing:
         raise ValueError("Zaman serisi düzenli ve artan tarih sırasıyla gelmeli.")
+    if nonnegative and (series < 0).any():
+        raise ValueError("Paylaşım adetleri negatif olamaz.")
     # One forecast origin: train on the past, score the untouched final periods.
     holdout = min(max(3, horizon), max(3, len(series) // 4))
     train, actual = series.iloc[:-holdout], series.iloc[-holdout:]
     if train.nunique() < 2:
         raise ValueError("Eğitim döneminde değişkenlik yok; trend modeli uygulanamaz.")
-    fitted = _fit(train)
+    fitted = _fit(np.log1p(train) if nonnegative else train)
     predicted = np.asarray(fitted.get_forecast(holdout).predicted_mean, dtype=float)
+    if nonnegative:
+        predicted = np.maximum(0, np.expm1(predicted))
+    if not np.isfinite(predicted).all():
+        raise ValueError("Model geçmiş dönem sınamasında sonlu tahmin üretemedi.")
     naive = np.repeat(float(train.iloc[-1]), holdout)
     errors = actual.to_numpy() - predicted
     metrics = {"mae": float(np.mean(np.abs(errors))), "rmse": float(np.sqrt(np.mean(errors ** 2))),
                "naive_mae": float(np.mean(np.abs(actual.to_numpy() - naive))),
                "holdout_periods": holdout, "train_periods": len(train)}
-    final = _fit(series).get_forecast(horizon)
+    final = _fit(np.log1p(series) if nonnegative else series).get_forecast(horizon)
     bounds = np.asarray(final.conf_int(alpha=1 - confidence), dtype=float)
     mean = np.asarray(final.predicted_mean, dtype=float)
+    if nonnegative:
+        mean = np.maximum(0, np.expm1(mean))
+        bounds = np.maximum(0, np.expm1(bounds))
     if not np.isfinite(mean).all() or not np.isfinite(bounds).all():
         raise ValueError("Model sonlu tahmin ve aralık üretemedi.")
     future = pd.date_range(series.index[-1], periods=horizon + 1, freq=series.index.freq)[1:]
     output = pd.DataFrame({"period": future, "forecast": mean, "lower": bounds[:, 0], "upper": bounds[:, 1]})
     validation = pd.DataFrame({"period": actual.index, "actual": actual.to_numpy(),
                                "prediction": predicted, "naive": naive})
-    return {"model": "Yerel doğrusal trend (durum uzayı)", "metrics": metrics,
+    return {"model": "Yerel doğrusal trend (log-adet)" if nonnegative else "Yerel doğrusal trend (durum uzayı)", "metrics": metrics,
             "confidence": confidence, "forecast": output, "validation": validation,
-            "history": series, "beats_naive": metrics["mae"] < metrics["naive_mae"]}
+            "history": series, "beats_naive": metrics["mae"] < metrics["naive_mae"], "nonnegative": nonnegative}
 
 
 def forecast_report(result):
@@ -83,5 +97,7 @@ def forecast_report(result):
             f"Son {m['holdout_periods']} dönem eğitim dışında sınandı. "
             f"MAE: {m['mae']:.4g}; RMSE: {m['rmse']:.4g}; basit tahmin MAE: {m['naive_mae']:.4g}. "
             f"{comparison}\n\n%{result['confidence'] * 100:.0f} tahmin aralığı model varsayımlarına dayanır; "
-            "garanti değildir. Model mevsimsellik veya dış etkenler kullanmaz. Negatif tahminler "
-            "adet metriklerinde modelin uygun olmayabileceğini gösterir.")
+            "garanti değildir. Model mevsimsellik veya dış etkenler kullanmaz. "
+            + ("Adetler log(1+adet) ölçeğinde modellenir; geri dönüşümde negatif değerler sıfırla sınırlanır. "
+               "Tahmin, geri dönüştürülmüş merkezi öngörüdür; aritmetik beklenen değer değildir."
+               if result.get("nonnegative") else "Negatif tahminler adet metriklerinde modelin uygun olmayabileceğini gösterir."))
