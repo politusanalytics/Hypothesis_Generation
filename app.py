@@ -1,3 +1,5 @@
+import os
+import hmac
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -14,6 +16,43 @@ st.set_page_config(
     page_icon="📊",
     layout="wide"
 )
+
+# --- KİMLİK DOĞRULAMA (AUTH GATE) ---
+def check_authentication() -> bool:
+    """Uygulamaya erişimi şifre ile korur (APP_PASSWORD ortam değişkeni)."""
+    expected_password = os.getenv("APP_PASSWORD")
+    if not expected_password and hasattr(st, "secrets") and "APP_PASSWORD" in st.secrets:
+        expected_password = str(st.secrets["APP_PASSWORD"])
+        
+    # Şifre ortamda tanımlı değilse açık bırak (yerel test kolaylığı)
+    if not expected_password:
+        return True
+
+    if st.session_state.get("authenticated", False):
+        if st.sidebar.button("🚪 Çıkış Yap", key="logout_btn"):
+            st.session_state["authenticated"] = False
+            st.rerun()
+        return True
+
+    # Giriş Kartı
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.markdown("## 🔒 Enlighty AI")
+        st.markdown("#### Pazarlama İçgörü Motoru Giriş")
+        st.caption("Bu platforma erişim şifre gerektirir.")
+        with st.form("login_form"):
+            entered_password = st.text_input("Giriş Şifresi", type="password", placeholder="Şifrenizi girin...")
+            submit = st.form_submit_button("Giriş Yap", use_container_width=True, type="primary")
+            if submit:
+                if entered_password and hmac.compare_digest(entered_password, expected_password):
+                    st.session_state["authenticated"] = True
+                    st.rerun()
+                else:
+                    st.error("Hatalı şifre. Lütfen tekrar deneyin.")
+    return False
+
+if not check_authentication():
+    st.stop()
 
 st.title("📊 AI Destekli Pazarlama İçgörü Motoru")
 st.caption("Stratejik Kök Neden Analizi, Demografik Sentez ve Hipotez Doğrulama Platformu")
