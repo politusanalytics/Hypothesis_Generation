@@ -131,42 +131,36 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
         sanitized_target = f"clickhousedb://{ch_host}:{ch_port}/{ch_db}"
         
         try:
-            from sqlalchemy import create_engine, inspect
-            temp_engine = create_engine(ch_uri)
-            inspector = inspect(temp_engine)
-            existing_tables = set(inspector.get_table_names())
-            target_tables = [t for t in CLICKHOUSE_CORE_TABLES if t in existing_tables]
-            
-            db = SQLDatabase.from_uri(ch_uri, include_tables=target_tables if target_tables else None)
+            db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
             db.get_table_info()  # Schema compilation verification
             logger.info(
                 "Connected to ClickHouse successfully.",
-                extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": target_tables}
+                extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": CLICKHOUSE_CORE_TABLES}
             )
             return db, ch_uri, "clickhouse"
         except Exception as e:
             # Fallback attempt with legacy clickhouse+http if clickhouse-sqlalchemy is present
             try:
                 legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
-                temp_engine = create_engine(legacy_uri)
-                inspector = inspect(temp_engine)
-                existing_tables = set(inspector.get_table_names())
-                target_tables = [t for t in CLICKHOUSE_CORE_TABLES if t in existing_tables]
-                
-                db = SQLDatabase.from_uri(legacy_uri, include_tables=target_tables if target_tables else None)
+                db = SQLDatabase.from_uri(legacy_uri, include_tables=CLICKHOUSE_CORE_TABLES)
                 db.get_table_info()
                 logger.info(
                     "Connected to ClickHouse via clickhouse+http successfully.",
-                    extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": target_tables}
+                    extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": CLICKHOUSE_CORE_TABLES}
                 )
                 return db, legacy_uri, "clickhouse"
             except Exception:
                 pass
             log_db_fallback(target_db=sanitized_target, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
+            raise RuntimeError(f"ClickHouse connection failed ({sanitized_target}): {e}") from e
 
-    # SQLite Varsayılan Veritabanı
-    sqlite_uri = "sqlite:///insight_generation_bot.db"
-    return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
+    # SQLite Local Fallback (only if file exists)
+    from pathlib import Path
+    sqlite_file = Path(__file__).resolve().parent / "insight_generation_bot.db"
+    if sqlite_file.exists():
+        sqlite_uri = f"sqlite:///{sqlite_file}"
+        return SQLDatabase.from_uri(sqlite_uri), sqlite_uri, "sqlite"
+    raise RuntimeError("No database connection available: ClickHouse is not configured and local SQLite database was not found.")
 
 
 # --- 4. HİBRİT VE KADEMELİ MOTOR (2-TIER ROUTING) ---
