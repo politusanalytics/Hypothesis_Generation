@@ -91,7 +91,18 @@ class QueryAgent:
     @property
     def schema(self) -> str:
         if self._schema is None:
-            self._schema = self.db.get_table_info()
+            try:
+                self._schema = self.db.get_table_info()
+            except Exception:
+                # ClickHouse VIEW fallback (CreateTable compile fails without storage engine on views)
+                schemas = []
+                for table in self.db.get_usable_table_names():
+                    try:
+                        desc = self.db.run(f"DESCRIBE TABLE {table}")
+                        schemas.append(f"Table {table}:\n{desc}")
+                    except Exception:
+                        pass
+                self._schema = "\n\n".join(schemas)
         return self._schema
 
     @property

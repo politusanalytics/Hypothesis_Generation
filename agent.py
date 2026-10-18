@@ -112,7 +112,7 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
                 db = SQLDatabase.from_uri(custom_uri, include_tables=CLICKHOUSE_CORE_TABLES)
             else:
                 db = SQLDatabase.from_uri(custom_uri)
-            db.get_table_info()
+            db.get_usable_table_names()
             return db, custom_uri, dialect
         except Exception as e:
             log_db_fallback(target_db=custom_uri, fallback_db="sqlite:///insight_generation_bot.db", reason=str(e))
@@ -132,7 +132,7 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
         
         try:
             db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-            db.get_table_info()  # Schema compilation verification
+            db.get_usable_table_names()  # Connection and table access verification
             logger.info(
                 "Connected to ClickHouse successfully.",
                 extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": CLICKHOUSE_CORE_TABLES}
@@ -143,7 +143,7 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
             try:
                 legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
                 db = SQLDatabase.from_uri(legacy_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-                db.get_table_info()
+                db.get_usable_table_names()
                 logger.info(
                     "Connected to ClickHouse via clickhouse+http successfully.",
                     extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": CLICKHOUSE_CORE_TABLES}
