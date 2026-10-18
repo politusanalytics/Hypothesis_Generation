@@ -1,0 +1,14 @@
+[server]
+port = 9095
+address = "127.0.0.1"
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 50
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#2b5c8f"

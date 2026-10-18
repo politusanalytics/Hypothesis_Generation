@@ -1,0 +1,41 @@
+name: Deploy Hypothesis Engine (Demo)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hypothesis-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Hetzner Server via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.HETZNER_SSH_IP }}
+          username: ${{ secrets.HETZNER_SSH_USERNAME }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            COMMIT_SHA=${{ github.sha }}
+            echo "🚀 Deploying Hypothesis Engine (commit: ${COMMIT_SHA:0:7})..."
+
+            cd /home/cicd/hypothesis-generation-demo
+            git fetch --no-tags origin
+            git checkout "$COMMIT_SHA" -f
+
+            echo "🐳 Building and starting container..."
+            CONTAINER_NAME=hypothesis-engine-demo \
+            ENVIRONMENT=demo \
+            APP_PORT=9095 \
+              docker compose -p hypothesis-engine-demo up -d --build
+
+            echo "🩺 Waiting for health check..."
+            sleep 5
+            docker inspect --format='{{json .State.Health.Status}}' hypothesis-engine-demo || true
+
+            echo "✅ Hypothesis Engine deployed successfully"
