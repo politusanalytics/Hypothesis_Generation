@@ -36,7 +36,7 @@ RUN mkdir -p /app/logs && chown -R appuser:appgroup /app/logs
 USER appuser
 
 ENV PYTHONUNBUFFERED=1 \
-    PORT=9095
+    PORT=8501
 
 EXPOSE ${PORT}
 

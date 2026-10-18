@@ -127,27 +127,37 @@ def get_database_connection(custom_uri: Optional[str] = None) -> Tuple[SQLDataba
         ch_db = get_secret("CLICKHOUSE_DB", "default")
         
         auth = f"{ch_user}:{ch_pass}@" if (ch_user or ch_pass) else ""
-        # clickhouse-connect official SQLAlchemy dialect is clickhousedb://
         ch_uri = f"clickhousedb://{auth}{ch_host}:{ch_port}/{ch_db}"
         sanitized_target = f"clickhousedb://{ch_host}:{ch_port}/{ch_db}"
         
         try:
-            db = SQLDatabase.from_uri(ch_uri, include_tables=CLICKHOUSE_CORE_TABLES)
-            db.get_table_info()  # Şema derleme doğrulaması
+            from sqlalchemy import create_engine, inspect
+            temp_engine = create_engine(ch_uri)
+            inspector = inspect(temp_engine)
+            existing_tables = set(inspector.get_table_names())
+            target_tables = [t for t in CLICKHOUSE_CORE_TABLES if t in existing_tables]
+            
+            db = SQLDatabase.from_uri(ch_uri, include_tables=target_tables if target_tables else None)
+            db.get_table_info()  # Schema compilation verification
             logger.info(
                 "Connected to ClickHouse successfully.",
-                extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host}
+                extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": target_tables}
             )
             return db, ch_uri, "clickhouse"
         except Exception as e:
             # Fallback attempt with legacy clickhouse+http if clickhouse-sqlalchemy is present
             try:
                 legacy_uri = f"clickhouse+http://{auth}{ch_host}:{ch_port}/{ch_db}"
-                db = SQLDatabase.from_uri(legacy_uri, include_tables=CLICKHOUSE_CORE_TABLES)
+                temp_engine = create_engine(legacy_uri)
+                inspector = inspect(temp_engine)
+                existing_tables = set(inspector.get_table_names())
+                target_tables = [t for t in CLICKHOUSE_CORE_TABLES if t in existing_tables]
+                
+                db = SQLDatabase.from_uri(legacy_uri, include_tables=target_tables if target_tables else None)
                 db.get_table_info()
                 logger.info(
                     "Connected to ClickHouse via clickhouse+http successfully.",
-                    extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host}
+                    extra={"event_type": "database_connection", "dialect": "clickhouse", "host": ch_host, "tables": target_tables}
                 )
                 return db, legacy_uri, "clickhouse"
             except Exception:

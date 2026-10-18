@@ -72,14 +72,18 @@ def setup_logging():
     formatter = StructuredExtraFormatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     # 1. Dönen Dosya Loglayıcısı (10 MB x 5 yedek)
-    file_handler = logging.handlers.RotatingFileHandler(
-        filename=log_dir / "app.log",
-        maxBytes=10 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8"
-    )
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(log_level)
+    file_handler = None
+    try:
+        file_handler = logging.handlers.RotatingFileHandler(
+            filename=log_dir / "app.log",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(log_level)
+    except (PermissionError, OSError) as e:
+        sys.stderr.write(f"Warning: Could not initialize file logging to {log_dir / 'app.log'}: {e}\n")
 
     # 2. Konsol Loglayıcısı
     console_handler = logging.StreamHandler()
@@ -91,7 +95,8 @@ def setup_logging():
     app_logger.setLevel(logging.DEBUG)
 
     if not app_logger.handlers:
-        app_logger.addHandler(file_handler)
+        if file_handler:
+            app_logger.addHandler(file_handler)
         app_logger.addHandler(console_handler)
 
         # 3. Graylog (GELF UDP / TCP / HTTP) Desteği

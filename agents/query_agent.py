@@ -83,7 +83,15 @@ class QueryAgent:
     def db(self) -> SQLDatabase:
         if self._db is None:
             if self.dialect == "clickhouse" or "clickhouse" in self.db_uri:
-                self._db = SQLDatabase.from_uri(self.db_uri, include_tables=CLICKHOUSE_CORE_TABLES)
+                try:
+                    from sqlalchemy import create_engine, inspect
+                    temp_engine = create_engine(self.db_uri)
+                    inspector = inspect(temp_engine)
+                    existing_tables = set(inspector.get_table_names())
+                    target_tables = [t for t in CLICKHOUSE_CORE_TABLES if t in existing_tables]
+                    self._db = SQLDatabase.from_uri(self.db_uri, include_tables=target_tables if target_tables else None)
+                except Exception:
+                    self._db = SQLDatabase.from_uri(self.db_uri)
             else:
                 self._db = SQLDatabase.from_uri(self.db_uri)
         return self._db

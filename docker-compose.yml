@@ -1,4 +1,4 @@
-# ─── Enlighty Hypothesis Engine (Demo) ──────────────────────────
+# ─── Enlighty Hypothesis Engine (Testing) ───────────────────────
 # Docker Compose for the hypothesis generation streamlit service.
 #
 # ClickHouse runs natively on the host at 127.0.0.1:8123.
@@ -6,8 +6,8 @@
 # to eliminate any external port exposure.
 #
 # Usage (from repo root):
-#   CONTAINER_NAME=hypothesis-engine-demo ENVIRONMENT=demo APP_PORT=9095 \
-#     docker compose -p hypothesis-engine-demo up -d --build
+#   CONTAINER_NAME=hypothesis-generation ENVIRONMENT=demo APP_PORT=8501 \
+#     docker compose -p hypothesis-generation up -d --build
 # ─────────────────────────────────────────────────────────────────
 
 services:
@@ -16,12 +16,12 @@ services:
       context: .
       dockerfile: Dockerfile
     image: hypothesis-engine:${TAG:-latest}
-    container_name: ${CONTAINER_NAME:-hypothesis-engine-demo}
+    container_name: ${CONTAINER_NAME:-hypothesis-generation}
     restart: unless-stopped
     env_file: .env
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-demo}
-      PORT: ${APP_PORT:-9095}
+      PORT: ${APP_PORT:-8501}
     network_mode: host
     deploy:
       resources:

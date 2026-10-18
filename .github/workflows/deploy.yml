@@ -1,4 +1,4 @@
-name: Deploy Hypothesis Engine (Demo)
+name: Deploy Hypothesis Engine (Testing)
 
 on:
   push:
@@ -24,18 +24,21 @@ jobs:
             COMMIT_SHA=${{ github.sha }}
             echo "🚀 Deploying Hypothesis Engine (commit: ${COMMIT_SHA:0:7})..."
 
-            cd /home/cicd/hypothesis-generation-demo
+            cd /home/cicd/hypothesis-generation
             git fetch --no-tags origin
             git checkout "$COMMIT_SHA" -f
 
+            # Ensure host logs directory exists and is writable by container appuser (UID 1000)
+            mkdir -p logs && chmod 777 logs
+
             echo "🐳 Building and starting container..."
-            CONTAINER_NAME=hypothesis-engine-demo \
+            CONTAINER_NAME=hypothesis-generation \
             ENVIRONMENT=demo \
-            APP_PORT=9095 \
-              docker compose -p hypothesis-engine-demo up -d --build
+            APP_PORT=8501 \
+              docker compose -p hypothesis-generation up -d --build
 
             echo "🩺 Waiting for health check..."
             sleep 5
-            docker inspect --format='{{json .State.Health.Status}}' hypothesis-engine-demo || true
+            docker inspect --format='{{json .State.Health.Status}}' hypothesis-generation || true
 
             echo "✅ Hypothesis Engine deployed successfully"
